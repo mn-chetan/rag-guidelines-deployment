@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Guideline Assistant - RAG-powered guideline lookup for quality auditors">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Guideline Assistant</title>
+    <link rel="stylesheet" href="css/styles.css?v=2.0">
+</head>
+<body>
+    <!-- Main Application Container -->
+    <div class="app-container">
+        
+        <!-- Left Sidebar -->
+        <aside class="sidebar" role="complementary" aria-label="Navigation and session management">
+            <div class="sidebar-header">
+                <h1 class="app-title">Guideline Assistant</h1>
+                <button 
+                    id="new-chat-btn" 
+                    class="new-chat-button"
+                    aria-label="Start a new chat session">
+                    <span class="button-icon">+</span>
+                    <span class="button-text">New Chat</span>
+                </button>
+            </div>
+
+            <!-- Conversation History -->
+            <nav class="conversation-history" aria-label="Conversation history">
+                <h2 class="history-title">Recent Conversations</h2>
+                <ul id="conversation-list" class="conversation-list" role="list">
+                    <!-- Conversation history items will be dynamically inserted here -->
+                </ul>
+            </nav>
+
+            <!-- URL Indexer Section -->
+            <section class="url-indexer-section" aria-label="Index new web content">
+                <h2 class="url-indexer-title">Index New URL</h2>
+                <form id="url-indexer-form" class="url-indexer-form">
+                    <div class="url-input-wrapper">
+                        <label for="url-input" class="visually-hidden">Enter URL to index</label>
+                        <input
+                            type="url"
+                            id="url-input"
+                            class="url-input"
+                            placeholder="https://example.com/article"
+                            aria-label="URL to index"
+                            required
+                        />
+                        <button
+                            type="submit"
+                            id="index-btn"
+                            class="index-button"
+                            aria-label="Index URL">
+                            <span class="index-icon">+</span>
+                            <span class="index-text">Index</span>
+                        </button>
+                    </div>
+                    <div id="index-status" class="index-status hidden" role="status" aria-live="polite"></div>
+                </form>
+                <div id="indexed-urls-list" class="indexed-urls-list" aria-label="Recently indexed URLs">
+                    <p class="no-urls-message">No URLs indexed yet.</p>
+                </div>
+            </section>
+
+            <!-- Source Links Section -->
+            <section class="source-links-section" aria-label="Related documents and websites">
+                <h2 class="source-links-title">Links to Document and Website for this Response</h2>
+                <div id="source-links-container" class="source-links-container">
+                    <p class="no-sources-message">No sources available yet. Submit a query to see related documents.</p>
+                </div>
+            </section>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content" role="main">
+            <!-- Conversation Display -->
+            <div 
+                id="conversation-display" 
+                class="conversation-display"
+                role="log"
+                aria-live="polite"
+                aria-label="Conversation messages">
+                <!-- Welcome message is rendered by conversation.js showWelcomeMessage() -->
+            </div>
+
+            <!-- Query Input Section -->
+            <div class="query-input-section">
+                <form id="query-form" class="query-form" role="search">
+                    <div class="input-wrapper">
+                        <label for="query-input" class="visually-hidden">Enter your question about guidelines</label>
+                        <textarea
+                            id="query-input"
+                            class="query-input"
+                            placeholder="Ask a question about guidelines..."
+                            rows="1"
+                            maxlength="1000"
+                            aria-label="Query input field"
+                            aria-describedby="query-hint"></textarea>
+
+                        <button 
+                            type="submit" 
+                            id="submit-btn"
+                            class="submit-button"
+                            aria-label="Submit query">
+                            <span class="submit-icon">→</span>
+                        </button>
+                    </div>
+                    <div id="query-hint" class="query-hint">
+                        Press Enter to submit, Escape to clear
+                    </div>
+                </form>
+
+                <!-- Loading Indicator -->
+                <div id="loading-indicator" class="loading-indicator hidden" role="status" aria-live="polite">
+                    <div class="loading-spinner"></div>
+                    <span class="loading-text">Processing your query...</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- PDF Viewer Panel -->
+        <div id="pdf-viewer-container" role="complementary" aria-label="Document viewer">
+            <!-- PDF viewer content will be rendered by pdf-viewer.js -->
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/api-client.js?v=2.1"></script>
+    <script src="js/query-input.js?v=2.0"></script>
+    <script src="js/conversation.js?v=2.0"></script>
+    <script src="js/session.js?v=2.0"></script>
+    <script src="js/response-renderer.js?v=2.0"></script>
+    <script src="js/response-actions.js?v=2.0"></script>
+    <script src="js/feedback.js?v=2.0"></script>
+    <script src="js/sidebar.js?v=2.0"></script>
+    <script src="js/loading.js?v=2.0"></script>
+    <script src="js/pdf-viewer.js?v=2.0"></script>
+    <script src="js/url-indexer.js?v=1.0"></script>
+    <script src="js/app.js?v=2.0"></script>
+</body>
+</html>
