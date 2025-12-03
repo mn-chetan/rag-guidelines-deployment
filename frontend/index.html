@@ -8,6 +8,12 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Guideline Assistant</title>
+    <!-- Google Fonts: Roboto & Roboto Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Material Symbols -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css?v=2.0">
 </head>
 <body>
@@ -18,11 +24,11 @@
         <aside class="sidebar" role="complementary" aria-label="Navigation and session management">
             <div class="sidebar-header">
                 <h1 class="app-title">Guideline Assistant</h1>
-                <button 
-                    id="new-chat-btn" 
+                <button
+                    id="new-chat-btn"
                     class="new-chat-button"
                     aria-label="Start a new chat session">
-                    <span class="button-icon">+</span>
+                    <span class="material-symbols-outlined">add</span>
                     <span class="button-text">New Chat</span>
                 </button>
             </div>
@@ -54,7 +60,7 @@
                             id="index-btn"
                             class="index-button"
                             aria-label="Index URL">
-                            <span class="index-icon">+</span>
+                            <span class="material-symbols-outlined">add</span>
                             <span class="index-text">Index</span>
                         </button>
                     </div>
@@ -100,12 +106,12 @@
                             aria-label="Query input field"
                             aria-describedby="query-hint"></textarea>
 
-                        <button 
-                            type="submit" 
+                        <button
+                            type="submit"
                             id="submit-btn"
                             class="submit-button"
                             aria-label="Submit query">
-                            <span class="submit-icon">→</span>
+                            <span class="material-symbols-outlined">send</span>
                         </button>
                     </div>
                     <div id="query-hint" class="query-hint">

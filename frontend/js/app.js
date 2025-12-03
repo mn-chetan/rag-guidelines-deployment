@@ -469,7 +469,7 @@ function showErrorMessage(message) {
   errorElement.className = 'global-error-message';
   errorElement.setAttribute('role', 'alert');
   errorElement.innerHTML = `
-    <div class="error-icon">⚠️</div>
+    <span class="material-symbols-outlined error-icon">warning</span>
     <div class="error-content">
       <div class="error-title">Error</div>
       <div class="error-text">${escapeHtml(message)}</div>
@@ -537,7 +537,7 @@ function showInitializationError(error) {
 
   const errorHTML = `
     <div class="initialization-error">
-      <div class="error-icon-large">⚠️</div>
+      <span class="material-symbols-outlined error-icon-large">warning</span>
       <h2>Failed to Initialize Application</h2>
       <p>${escapeHtml(error.message || 'An unexpected error occurred')}</p>
       <button onclick="location.reload()" class="retry-button">Retry</button>

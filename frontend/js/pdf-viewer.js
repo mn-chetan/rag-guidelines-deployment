@@ -24,7 +24,7 @@ class PDFViewer {
     this.container.innerHTML = `
       <div class="pdf-viewer-header">
         <div class="pdf-viewer-title">
-          <span class="pdf-icon">📄</span>
+          <span class="material-symbols-outlined pdf-icon">description</span>
           <span class="pdf-title-text">Document Viewer</span>
         </div>
         <div class="pdf-viewer-controls">

@@ -75,8 +75,8 @@ class Sidebar {
       }
       
       const icon = document.createElement('span');
-      icon.className = 'source-icon';
-      icon.textContent = isPDF ? '📄' : '🔗';
+      icon.className = 'material-symbols-outlined source-icon';
+      icon.textContent = isPDF ? 'description' : 'link';
       
       const titleSpan = document.createElement('span');
       titleSpan.className = 'source-title';

@@ -456,8 +456,8 @@ class ResponseRenderer {
     
     // Add icon
     const icon = document.createElement('span');
-    icon.className = 'source-citation-icon';
-    icon.textContent = isPDF ? '📄' : '🔗';
+    icon.className = 'material-symbols-outlined source-citation-icon';
+    icon.textContent = isPDF ? 'description' : 'link';
     icon.setAttribute('aria-hidden', 'true');
     
     // Add text
