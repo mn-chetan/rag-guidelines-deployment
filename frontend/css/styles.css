@@ -508,10 +508,12 @@ body {
 }
 
 .welcome-message h2 {
-    font-size: var(--font-size-3xl);
-    font-weight: var(--font-weight-bold);
+    font-size: var(--font-display-medium);
+    font-weight: var(--font-weight-normal);
     color: var(--md-sys-color-primary);
     margin-bottom: var(--spacing-md);
+    letter-spacing: 0;
+    line-height: 1.2;
 }
 
 .welcome-message > p {
