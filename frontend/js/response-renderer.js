@@ -351,15 +351,31 @@ class ResponseRenderer {
     block.questions.forEach(question => {
       // Clean up the question text (remove brackets if present)
       const cleanQuestion = question.replace(/^\[|\]$/g, '').trim();
-      
+
       const questionBox = document.createElement('button');
       questionBox.className = 'related-question-card';
-      questionBox.textContent = cleanQuestion;
+
+      // Add Material icon
+      const icon = document.createElement('span');
+      icon.className = 'material-symbols-outlined';
+      icon.textContent = 'chat_bubble';
+      icon.style.fontSize = '18px';
+      icon.style.position = 'relative';
+      icon.style.zIndex = '1';
+
+      // Add question text
+      const textSpan = document.createElement('span');
+      textSpan.textContent = cleanQuestion;
+      textSpan.style.position = 'relative';
+      textSpan.style.zIndex = '1';
+
+      questionBox.appendChild(icon);
+      questionBox.appendChild(textSpan);
       questionBox.dataset.query = cleanQuestion;
       questionBox.setAttribute('aria-label', `Ask: ${cleanQuestion}`);
-      
+
       // Click is handled by global event listener in app.js via the class and data-query
-      
+
       questionsGrid.appendChild(questionBox);
     });
     
