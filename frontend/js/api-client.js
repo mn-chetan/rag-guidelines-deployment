@@ -5,7 +5,13 @@
 
 class APIClient {
   constructor(options = {}) {
-    this.baseURL = options.baseURL || 'https://auditor-rag-api-438886470292.us-central1.run.app';
+    // Auto-detect localhost for development
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const defaultURL = isLocalhost 
+      ? 'http://localhost:8080'
+      : 'https://auditor-rag-api-438886470292.us-central1.run.app';
+    
+    this.baseURL = options.baseURL || defaultURL;
     this.timeout = options.timeout || 10000; // 10 second timeout
   }
 

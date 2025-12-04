@@ -16,9 +16,18 @@ from google.protobuf.json_format import MessageToDict
 import vertexai
 from vertexai.generative_models import GenerativeModel, GenerationConfig
 from scraper import scrape_url
+from admin import (
+    load_managed_urls, save_managed_urls, add_url, remove_url,
+    update_url_status, update_schedule, start_job, update_job_progress,
+    complete_job, get_job_status, update_import_status, compute_content_hash,
+    initialize_config_if_needed
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Background job tracking
+background_tasks = {}
 
 app = FastAPI(title="Auditor Guidelines API")
 
@@ -80,6 +89,17 @@ class IndexURLResponse(BaseModel):
     message: str
     file_path: str = None
     url: str = None
+
+
+# Admin Portal Models
+class AddURLRequest(BaseModel):
+    name: str
+    url: str
+
+
+class ScheduleUpdateRequest(BaseModel):
+    enabled: bool = None
+    interval_hours: int = None
 
 
 def upload_to_gcs(content: str, url: str) -> str:
@@ -558,6 +578,314 @@ async def index_url(request: IndexURLRequest):
     except Exception as e:
         logger.error(f"Error indexing URL: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to index URL: {str(e)}")
+
+
+# ==================== ADMIN PORTAL ENDPOINTS ====================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize config on startup if needed."""
+    await asyncio.to_thread(initialize_config_if_needed)
+    logger.info("Admin config initialized")
+
+
+@app.get("/admin/urls")
+async def get_managed_urls():
+    """Get all managed URLs with their status."""
+    config = await asyncio.to_thread(load_managed_urls)
+    return {
+        "urls": config.get("urls", []),
+        "total": len(config.get("urls", []))
+    }
+
+
+@app.post("/admin/urls")
+async def add_managed_url(request: AddURLRequest):
+    """Add a new URL to the managed list."""
+    try:
+        # Validate URL format
+        parsed = urlparse(request.url)
+        if not parsed.scheme or not parsed.netloc:
+            raise HTTPException(status_code=400, detail="Invalid URL format")
+        
+        new_url = await asyncio.to_thread(add_url, request.name, request.url)
+        return {"status": "success", "url": new_url}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to add URL: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/admin/urls/{url_id}")
+async def delete_managed_url(url_id: str):
+    """Remove a URL from the managed list."""
+    success = await asyncio.to_thread(remove_url, url_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="URL not found")
+    return {"status": "success", "message": "URL removed"}
+
+
+@app.post("/admin/urls/{url_id}/recrawl")
+async def recrawl_single_url(url_id: str):
+    """Re-crawl a single URL."""
+    config = await asyncio.to_thread(load_managed_urls)
+    
+    # Find the URL
+    url_entry = None
+    for u in config.get("urls", []):
+        if u["id"] == url_id:
+            url_entry = u
+            break
+    
+    if not url_entry:
+        raise HTTPException(status_code=404, detail="URL not found")
+    
+    try:
+        # Update status to indexing
+        await asyncio.to_thread(update_url_status, url_id, "indexing")
+        
+        # Scrape the URL
+        scrape_result = await asyncio.to_thread(scrape_url, url_entry["url"])
+        
+        if not scrape_result.get("success"):
+            await asyncio.to_thread(
+                update_url_status, url_id, "error", 
+                scrape_result.get("error", "Unknown error")
+            )
+            return {
+                "status": "error",
+                "message": scrape_result.get("error", "Failed to scrape"),
+                "url_id": url_id
+            }
+        
+        # Check if content has changed
+        content = scrape_result["content"]
+        new_hash = compute_content_hash(content)
+        
+        if url_entry.get("content_hash") == new_hash:
+            await asyncio.to_thread(update_url_status, url_id, "unchanged", None, new_hash)
+            return {
+                "status": "unchanged",
+                "message": "Content has not changed since last index",
+                "url_id": url_id
+            }
+        
+        # Upload to GCS
+        file_path = await asyncio.to_thread(upload_to_gcs, content, url_entry["url"])
+        
+        # Update status
+        await asyncio.to_thread(update_url_status, url_id, "success", None, new_hash)
+        
+        # Trigger Discovery Engine import
+        import_result = await asyncio.to_thread(trigger_discovery_engine_import)
+        await asyncio.to_thread(
+            update_import_status, 
+            import_result["operation_name"], 
+            "started"
+        )
+        
+        return {
+            "status": "success",
+            "message": f"URL re-crawled and uploaded. Import started.",
+            "url_id": url_id,
+            "file_path": file_path
+        }
+        
+    except Exception as e:
+        await asyncio.to_thread(update_url_status, url_id, "error", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/recrawl-all")
+async def recrawl_all_urls(background_tasks_param: bool = True):
+    """Start a bulk re-crawl of all managed URLs."""
+    config = await asyncio.to_thread(load_managed_urls)
+    urls = [u for u in config.get("urls", []) if u.get("enabled", True)]
+    
+    if not urls:
+        return {"status": "error", "message": "No URLs to re-crawl"}
+    
+    # Check if a job is already running
+    current_job = await asyncio.to_thread(get_job_status)
+    if current_job and current_job.get("status") == "running":
+        return {
+            "status": "error",
+            "message": "A re-crawl job is already running",
+            "job_id": current_job.get("job_id")
+        }
+    
+    # Start a new job
+    url_ids = [u["id"] for u in urls]
+    job_id = await asyncio.to_thread(start_job, "bulk_recrawl", url_ids)
+    
+    # Run the job in background
+    asyncio.create_task(run_bulk_recrawl_job(job_id, urls))
+    
+    return {
+        "status": "started",
+        "message": f"Started re-crawling {len(urls)} URLs",
+        "job_id": job_id,
+        "total_urls": len(urls)
+    }
+
+
+async def run_bulk_recrawl_job(job_id: str, urls: list):
+    """Background task to run bulk re-crawl."""
+    processed = 0
+    successful = 0
+    failed = 0
+    skipped = 0
+    
+    try:
+        for url_entry in urls:
+            url_id = url_entry["id"]
+            url = url_entry["url"]
+            name = url_entry["name"]
+            
+            # Update progress
+            await asyncio.to_thread(
+                update_job_progress, url, name, processed, successful, failed, skipped
+            )
+            
+            try:
+                # Scrape the URL
+                scrape_result = await asyncio.to_thread(scrape_url, url)
+                
+                if not scrape_result.get("success"):
+                    failed += 1
+                    await asyncio.to_thread(
+                        update_url_status, url_id, "error",
+                        scrape_result.get("error", "Unknown error")
+                    )
+                    await asyncio.to_thread(
+                        update_job_progress, url, name, processed + 1, 
+                        successful, failed, skipped, 
+                        scrape_result.get("error")
+                    )
+                    processed += 1
+                    continue
+                
+                # Check if content has changed
+                content = scrape_result["content"]
+                new_hash = compute_content_hash(content)
+                
+                if url_entry.get("content_hash") == new_hash:
+                    skipped += 1
+                    await asyncio.to_thread(update_url_status, url_id, "unchanged", None, new_hash)
+                    processed += 1
+                    continue
+                
+                # Upload to GCS
+                await asyncio.to_thread(upload_to_gcs, content, url)
+                
+                # Update status
+                await asyncio.to_thread(update_url_status, url_id, "success", None, new_hash)
+                successful += 1
+                
+            except Exception as e:
+                failed += 1
+                await asyncio.to_thread(update_url_status, url_id, "error", str(e))
+                logger.error(f"Failed to process {url}: {e}")
+            
+            processed += 1
+        
+        # Trigger Discovery Engine import once at the end (if any successful)
+        if successful > 0:
+            try:
+                import_result = await asyncio.to_thread(trigger_discovery_engine_import)
+                await asyncio.to_thread(
+                    update_import_status,
+                    import_result["operation_name"],
+                    "started"
+                )
+            except Exception as e:
+                logger.error(f"Failed to trigger import: {e}")
+        
+        # Complete the job
+        await asyncio.to_thread(complete_job, "completed")
+        logger.info(f"Bulk re-crawl completed: {successful} success, {failed} failed, {skipped} skipped")
+        
+    except Exception as e:
+        logger.error(f"Bulk re-crawl job failed: {e}")
+        await asyncio.to_thread(complete_job, "failed")
+
+
+@app.get("/admin/job-status")
+async def get_current_job_status():
+    """Get the status of the current or last job."""
+    job = await asyncio.to_thread(get_job_status)
+    if not job:
+        return {"status": "no_job", "message": "No job running or completed"}
+    return job
+
+
+@app.post("/admin/scheduled-recrawl")
+async def scheduled_recrawl():
+    """Endpoint for Cloud Scheduler to trigger automatic re-crawl."""
+    config = await asyncio.to_thread(load_managed_urls)
+    
+    # Check if schedule is enabled
+    if not config.get("schedule", {}).get("enabled", True):
+        logger.info("Scheduled re-crawl skipped - schedule disabled")
+        return {"status": "skipped", "message": "Schedule is disabled"}
+    
+    # Trigger the recrawl
+    return await recrawl_all_urls()
+
+
+@app.get("/admin/schedule")
+async def get_schedule():
+    """Get schedule configuration."""
+    config = await asyncio.to_thread(load_managed_urls)
+    return config.get("schedule", {})
+
+
+@app.put("/admin/schedule")
+async def update_schedule_config(request: ScheduleUpdateRequest):
+    """Update schedule configuration."""
+    schedule = await asyncio.to_thread(
+        update_schedule, 
+        request.enabled, 
+        request.interval_hours
+    )
+    return {"status": "success", "schedule": schedule}
+
+
+@app.get("/admin/import-status")
+async def get_import_status():
+    """Get the status of the last Discovery Engine import."""
+    config = await asyncio.to_thread(load_managed_urls)
+    last_import = config.get("last_import")
+    
+    if not last_import:
+        return {"status": "no_import", "message": "No import has been triggered yet"}
+    
+    # If import is in progress, try to check the operation status
+    if last_import.get("status") == "started":
+        try:
+            from google.longrunning import operations_pb2
+            from google.cloud import discoveryengine_v1 as discoveryengine
+            
+            # Check operation status
+            client = discoveryengine.DocumentServiceClient()
+            operation = client._transport.operations_client.get_operation(
+                last_import["operation_name"]
+            )
+            
+            if operation.done:
+                await asyncio.to_thread(
+                    update_import_status,
+                    last_import["operation_name"],
+                    "completed",
+                    datetime.utcnow().isoformat() + "Z"
+                )
+                last_import["status"] = "completed"
+                last_import["completed_at"] = datetime.utcnow().isoformat() + "Z"
+        except Exception as e:
+            logger.warning(f"Could not check operation status: {e}")
+    
+    return last_import
 
 
 if __name__ == "__main__":

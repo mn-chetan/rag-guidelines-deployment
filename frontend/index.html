@@ -41,36 +41,6 @@
                 </ul>
             </nav>
 
-            <!-- URL Indexer Section -->
-            <section class="url-indexer-section" aria-label="Index new web content">
-                <h2 class="url-indexer-title">Index New URL</h2>
-                <form id="url-indexer-form" class="url-indexer-form">
-                    <div class="url-input-wrapper">
-                        <label for="url-input" class="visually-hidden">Enter URL to index</label>
-                        <input
-                            type="url"
-                            id="url-input"
-                            class="url-input"
-                            placeholder="https://example.com/article"
-                            aria-label="URL to index"
-                            required
-                        />
-                        <button
-                            type="submit"
-                            id="index-btn"
-                            class="index-button"
-                            aria-label="Index URL">
-                            <span class="material-symbols-outlined">add</span>
-                            <span class="index-text">Index</span>
-                        </button>
-                    </div>
-                    <div id="index-status" class="index-status hidden" role="status" aria-live="polite"></div>
-                </form>
-                <div id="indexed-urls-list" class="indexed-urls-list" aria-label="Recently indexed URLs">
-                    <p class="no-urls-message">No URLs indexed yet.</p>
-                </div>
-            </section>
-
             <!-- Source Links Section -->
             <section class="source-links-section" aria-label="Related documents and websites">
                 <h2 class="source-links-title">Links to Document and Website for this Response</h2>
@@ -78,6 +48,14 @@
                     <p class="no-sources-message">No sources available yet. Submit a query to see related documents.</p>
                 </div>
             </section>
+
+            <!-- Admin Portal Link -->
+            <div class="sidebar-footer">
+                <a href="admin.html" class="admin-link">
+                    <span class="material-symbols-outlined">admin_panel_settings</span>
+                    Admin Portal
+                </a>
+            </div>
         </aside>
 
         <!-- Main Content Area -->
@@ -144,7 +122,6 @@
     <script src="js/sidebar.js?v=2.0"></script>
     <script src="js/loading.js?v=2.0"></script>
     <script src="js/pdf-viewer.js?v=2.0"></script>
-    <script src="js/url-indexer.js?v=1.0"></script>
     <script src="js/app.js?v=2.0"></script>
 </body>
 </html>

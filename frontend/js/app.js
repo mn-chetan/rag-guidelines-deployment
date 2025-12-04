@@ -88,9 +88,6 @@ async function initializeApp() {
       conversation: app.conversation
     });
 
-    // Initialize URL indexer
-    app.urlIndexer = new URLIndexer(app.apiClient);
-
     // Set up global event listeners
     setupGlobalEventListeners();
 
