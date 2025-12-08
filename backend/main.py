@@ -4,6 +4,8 @@ import logging
 import json
 import asyncio
 import time
+import re
+import hashlib
 from datetime import datetime
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException
@@ -20,7 +22,9 @@ from admin import (
     load_managed_urls, save_managed_urls, add_url, remove_url,
     update_url_status, update_schedule, start_job, update_job_progress,
     complete_job, get_job_status, update_import_status, compute_content_hash,
-    initialize_config_if_needed
+    initialize_config_if_needed,
+    load_prompt_config, update_prompt, reset_prompt_to_default,
+    rollback_prompt, validate_prompt_template
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 # Background job tracking
 background_tasks = {}
+
+# Cache for GCS metadata lookups (maps GCS path -> original URL)
+gcs_metadata_cache = {}
 
 app = FastAPI(title="Auditor Guidelines API")
 
@@ -102,6 +109,100 @@ class ScheduleUpdateRequest(BaseModel):
     interval_hours: int = None
 
 
+class UpdatePromptRequest(BaseModel):
+    template: str
+
+
+class PreviewPromptRequest(BaseModel):
+    template: str
+    sample_query: str = "Should I flag a wine bottle in the background?"
+
+
+
+def clean_snippet_html(text: str) -> str:
+    """
+    Remove HTML tags from Discovery Engine snippets.
+    Discovery Engine returns snippets with <b> tags for highlighting.
+
+    Args:
+        text: Snippet text that may contain HTML tags
+
+    Returns:
+        Clean text with HTML tags removed
+    """
+    if not text:
+        return text
+
+    # Remove all HTML tags using regex
+    # This handles <b>, </b>, and any other tags
+    cleaned = re.sub(r'<[^>]+>', '', text)
+
+    # Normalize whitespace (collapse multiple spaces)
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+
+    return cleaned.strip()
+
+
+def normalize_url(url: str) -> str:
+    """
+    Normalize URL to prevent duplicates from trailing slashes, case differences, etc.
+
+    Args:
+        url: The URL to normalize
+
+    Returns:
+        Normalized URL
+    """
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(url)
+
+    # Remove trailing slash from path (unless it's just "/")
+    path = parsed.path.rstrip('/') if parsed.path != '/' else '/'
+
+    # Reconstruct without fragment
+    normalized = urlunparse((
+        parsed.scheme.lower(),      # Normalize scheme to lowercase
+        parsed.netloc.lower(),       # Normalize domain to lowercase
+        path,                        # Path (keep case-sensitive for compatibility)
+        parsed.params,
+        parsed.query,
+        ''                          # Remove fragment
+    ))
+
+    return normalized
+
+
+def gcs_file_exists(url: str) -> bool:
+    """
+    Check if a scraped file exists in GCS for the given URL.
+    
+    Args:
+        url: The original URL
+        
+    Returns:
+        True if the file exists, False otherwise
+    """
+    try:
+        normalized_url = normalize_url(url)
+        parsed = urlparse(normalized_url)
+        domain = parsed.netloc.replace("www.", "")
+        url_hash = hashlib.sha256(normalized_url.encode('utf-8')).hexdigest()[:16]
+        filename = f"{domain}_{url_hash}.html"
+        blob_path = f"{GCS_SCRAPED_FOLDER}/{filename}"
+        
+        bucket = storage_client.bucket(GCS_BUCKET)
+        blob = bucket.blob(blob_path)
+        
+        exists = blob.exists()
+        logger.info(f"Checking GCS file {blob_path}: exists={exists}")
+        return exists
+    except Exception as e:
+        logger.error(f"Failed to check GCS file existence for {url}: {e}")
+        return False
+
+
+
 def upload_to_gcs(content: str, url: str) -> str:
     """
     Upload scraped content to GCS bucket.
@@ -114,12 +215,19 @@ def upload_to_gcs(content: str, url: str) -> str:
         The GCS file path (e.g., "scraped/example.com_1234567890.html")
     """
     try:
-        # Parse domain and create filename
-        parsed = urlparse(url)
+        # Normalize URL before hashing to prevent duplicates from trailing slashes, case, etc.
+        normalized_url = normalize_url(url)
+
+        # Parse domain and create stable filename from URL hash
+        parsed = urlparse(normalized_url)
         domain = parsed.netloc.replace("www.", "")
-        timestamp = int(datetime.now().timestamp())
-        filename = f"{domain}_{timestamp}.html"
+
+        # Use URL hash for stable, unique filenames (prevents duplicates)
+        url_hash = hashlib.sha256(normalized_url.encode('utf-8')).hexdigest()[:16]
+        filename = f"{domain}_{url_hash}.html"
         blob_path = f"{GCS_SCRAPED_FOLDER}/{filename}"
+
+        logger.info(f"Uploading {url} (normalized: {normalized_url}) to {blob_path}")
 
         # Create HTML document with metadata
         html_content = f"""<!DOCTYPE html>
@@ -138,12 +246,19 @@ def upload_to_gcs(content: str, url: str) -> str:
 </html>
 """
 
-        # Upload to GCS
+        # Upload to GCS with custom metadata
         bucket = storage_client.bucket(GCS_BUCKET)
         blob = bucket.blob(blob_path)
+
+        # Set custom metadata that Discovery Engine can access
+        blob.metadata = {
+            "source_url": url,
+            "indexed_at": datetime.now().isoformat()
+        }
+
         blob.upload_from_string(html_content, content_type="text/html")
 
-        logger.info(f"Uploaded content to gs://{GCS_BUCKET}/{blob_path}")
+        logger.info(f"Uploaded content to gs://{GCS_BUCKET}/{blob_path} with metadata source_url={url}")
         return blob_path
 
     except Exception as e:
@@ -224,18 +339,83 @@ def retrieve_snippets(query: str) -> list:
             doc = result.document
             doc_dict = MessageToDict(doc._pb)
             derived = doc_dict.get("derivedStructData", {})
+            struct_data = doc_dict.get("structData", {})
+
             title = derived.get("title", derived.get("link", "Document"))
             link = derived.get("link", "")
+
+            # Try to get original URL from multiple possible locations:
+            # 1. derivedStructData.source (extracted from <meta name="source">)
+            # 2. structData.source (if manually set)
+            # 3. derivedStructData.extractedMetadata.source
+            # 4. GCS blob custom metadata (source_url)
+            original_url = (
+                derived.get("source") or
+                struct_data.get("source") or
+                derived.get("extractedMetadata", {}).get("source") or
+                struct_data.get("source_url") or  # GCS custom metadata
+                ""
+            )
+
+            # Fallback: Try to fetch original URL from GCS blob metadata if we have a GCS path
+            if not original_url and link.startswith("gs://"):
+                # Check cache first
+                if link in gcs_metadata_cache:
+                    original_url = gcs_metadata_cache[link]
+                    logger.debug(f"Retrieved original URL from cache: {original_url}")
+                else:
+                    try:
+                        # Parse GCS path: gs://bucket-name/path/to/file.html
+                        gcs_path = link.replace(f"gs://{GCS_BUCKET}/", "")
+                        bucket = storage_client.bucket(GCS_BUCKET)
+                        blob = bucket.blob(gcs_path)
+
+                        # Try to get metadata from the blob
+                        if blob.exists():
+                            blob.reload()  # Load metadata
+                            if blob.metadata and "source_url" in blob.metadata:
+                                original_url = blob.metadata["source_url"]
+                                gcs_metadata_cache[link] = original_url  # Cache it
+                                logger.info(f"Retrieved original URL from GCS metadata: {original_url}")
+                            else:
+                                logger.warning(f"GCS blob {gcs_path} has no source_url metadata")
+                        else:
+                            logger.warning(f"GCS blob {gcs_path} does not exist")
+                    except Exception as e:
+                        logger.error(f"Failed to fetch GCS metadata for {link}: {e}")
+
+            # Use original URL if available, otherwise fall back to link (GCS path or other)
+            final_link = original_url if original_url else link
+
+            # Debug logging
+            if not original_url and link.startswith("gs://"):
+                logger.warning(f"No original URL found for GCS document: {link}. Using GCS path as fallback.")
+
             snippets = derived.get("snippets", [])
-            snippet_texts = [s.get("snippet", "") for s in snippets if s.get("snippet")]
+            snippet_texts = [
+                clean_snippet_html(s.get("snippet", ""))
+                for s in snippets
+                if s.get("snippet")
+            ]
             combined_text = "\n".join(snippet_texts) if snippet_texts else ""
-            
+
             sources.append({
                 "title": title,
-                "link": link,
+                "link": final_link,
                 "snippet": combined_text
             })
-        
+
+        # Check if any GCS URLs are being returned to users (potential metadata extraction failure)
+        gcs_url_count = sum(1 for s in sources if s['link'].startswith('gs://'))
+        if gcs_url_count > 0:
+            logger.error(
+                f"⚠️  URL EXTRACTION FAILURE: Returning {gcs_url_count} GCS URL(s) to user! "
+                f"This indicates metadata extraction failed. Users should only see original URLs."
+            )
+            for s in sources:
+                if s['link'].startswith('gs://'):
+                    logger.error(f"   - GCS URL being returned: {s['link']}")
+
         logger.info(f"Search returned {len(sources)} sources")
         return sources
     except Exception as e:
@@ -357,8 +537,18 @@ Provide a COMPREHENSIVE answer:
 Use bullet points for readability. Be thorough — the auditor wants full context."""
 
     else:
-        # Default: concise, verdict-first
-        return f"""You are the Guideline Assistant for media auditors. Your job is to give QUICK, CLEAR answers.
+        # Default: Load from config
+        try:
+            config = load_prompt_config()
+            template = config["active_prompt"]["template"]
+            
+            # Replace template variables
+            prompt = template.replace("{{context}}", context_text).replace("{{query}}", query)
+            return prompt
+        except Exception as e:
+            logger.error(f"Failed to load prompt config, using hardcoded default: {e}")
+            # Fallback to hardcoded default
+            return f"""You are the Guideline Assistant for media auditors. Your job is to give QUICK, CLEAR answers.
 
 CONTEXT:
 {context_text}
@@ -389,6 +579,7 @@ RULES:
 - Keep it under 100 words unless complexity requires more
 - Use bullet points, not paragraphs
 - The Related Questions should be natural follow-ups an auditor would ask"""
+
 
 
 @app.post("/query-stream")
@@ -663,7 +854,9 @@ async def recrawl_single_url(url_id: str):
         content = scrape_result["content"]
         new_hash = compute_content_hash(content)
         
-        if url_entry.get("content_hash") == new_hash:
+        # Only skip if hash matches AND file exists in GCS
+        file_exists = await asyncio.to_thread(gcs_file_exists, url_entry["url"])
+        if url_entry.get("content_hash") == new_hash and file_exists:
             await asyncio.to_thread(update_url_status, url_id, "unchanged", None, new_hash)
             return {
                 "status": "unchanged",
@@ -770,7 +963,9 @@ async def run_bulk_recrawl_job(job_id: str, urls: list):
                 content = scrape_result["content"]
                 new_hash = compute_content_hash(content)
                 
-                if url_entry.get("content_hash") == new_hash:
+                # Only skip if hash matches AND file exists in GCS
+                file_exists = await asyncio.to_thread(gcs_file_exists, url)
+                if url_entry.get("content_hash") == new_hash and file_exists:
                     skipped += 1
                     await asyncio.to_thread(update_url_status, url_id, "unchanged", None, new_hash)
                     processed += 1
@@ -886,6 +1081,139 @@ async def get_import_status():
             logger.warning(f"Could not check operation status: {e}")
     
     return last_import
+
+
+# ==================== PROMPT CONFIGURATION ENDPOINTS ====================
+
+@app.get("/admin/prompt")
+async def get_prompt_config():
+    """Get current prompt configuration."""
+    config = await asyncio.to_thread(load_prompt_config)
+    return {
+        "active_prompt": config.get("active_prompt"),
+        "defaults": config.get("defaults"),
+        "history_count": len(config.get("history", []))
+    }
+
+
+@app.put("/admin/prompt")
+async def update_prompt_config(request: UpdatePromptRequest):
+    """Update the active prompt template."""
+    success, error, config = await asyncio.to_thread(
+        update_prompt, 
+        request.template
+    )
+    
+    if not success:
+        raise HTTPException(status_code=400, detail=error)
+    
+    return {
+        "status": "success",
+        "message": "Prompt updated successfully",
+        "active_prompt": config.get("active_prompt")
+    }
+
+
+@app.post("/admin/prompt/preview")
+async def preview_prompt_config(request: PreviewPromptRequest):
+    """Preview a prompt with a sample query before saving."""
+    # Validate the template first
+    is_valid, error = validate_prompt_template(request.template)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error)
+    
+    try:
+        # Retrieve context for the sample query
+        sources = await asyncio.to_thread(retrieve_snippets, request.sample_query)
+        
+        # Build context
+        context_text = ""
+        for i, source in enumerate(sources, 1):
+            if source['snippet']:
+                context_text += f"Source {i} ({source['title']}):\n{source['snippet']}\n\n"
+        
+        if not context_text:
+            context_text = "[No context found for this query]"
+        
+        # Replace template variables to show full rendered prompt
+        rendered_prompt = request.template.replace("{{context}}", context_text).replace("{{query}}", request.sample_query)
+        
+        # Generate response using Gemini
+        try:
+            generation_config = GenerationConfig(
+                temperature=0.2,
+                max_output_tokens=TOKEN_LIMITS["default"]
+            )
+            response = gemini_model.generate_content(rendered_prompt, generation_config=generation_config)
+            generated_response = response.text
+        except Exception as e:
+            logger.error(f"Preview generation failed: {e}")
+            generated_response = f"[Error generating preview: {str(e)}]"
+        
+        return {
+            "status": "success",
+            "rendered_prompt": rendered_prompt,
+            "sample_query": request.sample_query,
+            "generated_response": generated_response,
+            "sources": sources
+        }
+    except Exception as e:
+        logger.error(f"Preview failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
+
+
+@app.post("/admin/prompt/reset")
+async def reset_prompt_config():
+    """Reset prompt to default configuration."""
+    success, error, config = await asyncio.to_thread(reset_prompt_to_default)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail=error)
+    
+    return {
+        "status": "success",
+        "message": "Prompt reset to default",
+        "active_prompt": config.get("active_prompt")
+    }
+
+
+@app.get("/admin/prompt/history")
+async def get_prompt_history():
+    """Get version history of prompts."""
+    config = await asyncio.to_thread(load_prompt_config)
+    history = config.get("history", [])
+    
+    # Return simplified history (without full template text for list view)
+    simplified_history = [
+        {
+            "version": h.get("version"),
+            "updated_at": h.get("updated_at"),
+            "updated_by": h.get("updated_by"),
+            "template_preview": h.get("template", "")[:100] + "..." if len(h.get("template", "")) > 100 else h.get("template", "")
+        }
+        for h in history
+    ]
+    
+    return {
+        "history": simplified_history,
+        "total": len(history)
+    }
+
+
+@app.post("/admin/prompt/rollback/{version}")
+async def rollback_prompt_version(version: int):
+    """Rollback to a specific version from history."""
+    success, error, config = await asyncio.to_thread(rollback_prompt, version)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail=error)
+    
+    return {
+        "status": "success",
+        "message": f"Rolled back to version {version}",
+        "active_prompt": config.get("active_prompt")
+    }
+
 
 
 if __name__ == "__main__":

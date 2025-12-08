@@ -230,6 +230,149 @@ class APIClient {
       throw new Error(`Failed to index URL: ${error.message}`);
     }
   }
+
+  /**
+   * Get current prompt configuration
+   * @returns {Promise<Object>} Prompt configuration
+   */
+  async getPromptConfig() {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseURL}/admin/prompt`);
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      throw new Error(`Failed to get prompt config: ${error.message}`);
+    }
+  }
+
+  /**
+   * Update prompt configuration
+   * @param {string} template - New prompt template
+   * @returns {Promise<Object>} Response data
+   */
+  async updatePromptConfig(template) {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseURL}/admin/prompt`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ template })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `API error: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      throw new Error(`Failed to update prompt: ${error.message}`);
+    }
+  }
+
+  /**
+   * Preview prompt with sample query
+   * @param {string} template - Prompt template to preview
+   * @param {string} sampleQuery - Sample query to test
+   * @returns {Promise<Object>} Preview response with rendered prompt and generated response
+   */
+  async previewPrompt(template, sampleQuery) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s for preview
+
+      const response = await fetch(`${this.baseURL}/admin/prompt/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          template, 
+          sample_query: sampleQuery 
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `API error: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new Error('Preview timeout - please try again');
+      }
+      throw new Error(`Failed to preview prompt: ${error.message}`);
+    }
+  }
+
+  /**
+   * Reset prompt to default
+   * @returns {Promise<Object>} Response data
+   */
+  async resetPrompt() {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseURL}/admin/prompt/reset`, {
+        method: 'POST'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      throw new Error(`Failed to reset prompt: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get prompt version history
+   * @returns {Promise<Object>} History data
+   */
+  async getPromptHistory() {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseURL}/admin/prompt/history`);
+      
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      throw new Error(`Failed to get prompt history: ${error.message}`);
+    }
+  }
+
+  /**
+   * Rollback to a specific version
+   * @param {number} version - Version number to rollback to
+   * @returns {Promise<Object>} Response data
+   */
+  async rollbackPrompt(version) {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseURL}/admin/prompt/rollback/${version}`, {
+        method: 'POST'
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `API error: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      throw new Error(`Failed to rollback prompt: ${error.message}`);
+    }
+  }
 }
 
 // Export for use in other modules

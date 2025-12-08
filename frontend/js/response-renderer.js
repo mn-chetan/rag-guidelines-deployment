@@ -465,7 +465,28 @@ class ResponseRenderer {
         this.openPDFViewer(url, source.snippet || '', source.title || `Source ${index}`);
       });
     } else {
-      link.href = url;
+      // Apply text fragment highlighting for web sources
+      const shouldHighlight = source.snippet &&
+                              source.snippet.trim().length > 0 &&
+                              !url.includes('#') &&  // Don't override existing anchors
+                              supportsTextFragments();
+
+      if (shouldHighlight) {
+        const fragment = extractTextFragment(source.snippet, { maxWords: 40 });
+        if (fragment) {
+          link.href = buildTextFragmentUrl(url, fragment);
+        } else {
+          link.href = url;
+        }
+      } else {
+        link.href = url;
+
+        // For browsers that don't support text fragments, show snippet in tooltip
+        if (!supportsTextFragments() && source.snippet) {
+          link.title = `Snippet: ${source.snippet.substring(0, 150)}${source.snippet.length > 150 ? '...' : ''}`;
+        }
+      }
+
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
     }

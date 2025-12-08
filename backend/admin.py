@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 # GCS Configuration
 GCS_BUCKET = "rag-guidelines-v2"
 CONFIG_PATH = "config/managed_urls.json"
+PROMPT_CONFIG_PATH = "config/prompt_config.json"
 
 # In-memory job state (for tracking ongoing bulk operations)
 current_job_state: Dict[str, Any] = {}
@@ -315,3 +316,249 @@ def update_import_status(operation_name: str, status: str,
     }
     
     save_managed_urls(config)
+
+
+# ==================== PROMPT CONFIGURATION ====================
+
+def get_default_prompt_config() -> Dict[str, Any]:
+    """Return default prompt configuration with original hardcoded prompts."""
+    return {
+        "active_prompt": {
+            "id": "default",
+            "name": "Default Prompt",
+            "template": """You are the Guideline Assistant for media auditors. Your job is to give QUICK, CLEAR answers.
+
+CONTEXT:
+{{context}}
+
+QUESTION: {{query}}
+
+RESPOND IN THIS EXACT FORMAT:
+
+**Verdict**: [Flag / Don't Flag / Needs Review]
+
+**Why**:
+- [State the specific guideline rule that applies]
+- [Explain how the content violates/complies with that rule]
+
+**Guideline Reference**: [Which guideline section]
+
+**Related Questions**:
+- [Suggest a relevant follow-up question the auditor might ask]
+- [Suggest another related question about edge cases or variations]
+- [Suggest a question about a related guideline topic]
+
+RULES:
+- Lead with the verdict — auditors need fast answers
+- ALWAYS connect your reasoning to the specific guideline text
+- Be CONFIDENT. If guidelines cover a category (e.g., "weapons"), apply it clearly
+- Make the logical connection explicit: "The guideline prohibits X, and this content shows Y, therefore..."
+- Only say "Needs Review" if the guidelines genuinely don't cover this category
+- Keep it under 100 words unless complexity requires more
+- Use bullet points, not paragraphs
+- The Related Questions should be natural follow-ups an auditor would ask""",
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "updated_by": "system",
+            "version": 1
+        },
+        "history": [],
+        "defaults": {
+            "template": """You are the Guideline Assistant for media auditors. Your job is to give QUICK, CLEAR answers.
+
+CONTEXT:
+{{context}}
+
+QUESTION: {{query}}
+
+RESPOND IN THIS EXACT FORMAT:
+
+**Verdict**: [Flag / Don't Flag / Needs Review]
+
+**Why**:
+- [State the specific guideline rule that applies]
+- [Explain how the content violates/complies with that rule]
+
+**Guideline Reference**: [Which guideline section]
+
+**Related Questions**:
+- [Suggest a relevant follow-up question the auditor might ask]
+- [Suggest another related question about edge cases or variations]
+- [Suggest a question about a related guideline topic]
+
+RULES:
+- Lead with the verdict — auditors need fast answers
+- ALWAYS connect your reasoning to the specific guideline text
+- Be CONFIDENT. If guidelines cover a category (e.g., "weapons"), apply it clearly
+- Make the logical connection explicit: "The guideline prohibits X, and this content shows Y, therefore..."
+- Only say "Needs Review" if the guidelines genuinely don't cover this category
+- Keep it under 100 words unless complexity requires more
+- Use bullet points, not paragraphs
+- The Related Questions should be natural follow-ups an auditor would ask"""
+        }
+    }
+
+
+def validate_prompt_template(template: str) -> tuple[bool, Optional[str]]:
+    """
+    Validate prompt template.
+    
+    Returns:
+        (is_valid, error_message)
+    """
+    if not template or not template.strip():
+        return False, "Prompt cannot be empty"
+    
+    if len(template) < 50:
+        return False, "Prompt is too short (minimum 50 characters)"
+    
+    if len(template) > 10000:
+        return False, "Prompt exceeds maximum length of 10,000 characters"
+    
+    if "{{query}}" not in template:
+        return False, "Prompt must include {{query}} variable"
+    
+    if "{{context}}" not in template:
+        return False, "Prompt must include {{context}} variable"
+    
+    return True, None
+
+
+def load_prompt_config() -> Dict[str, Any]:
+    """Load prompt configuration from GCS."""
+    try:
+        client = get_storage_client()
+        bucket = client.bucket(GCS_BUCKET)
+        blob = bucket.blob(PROMPT_CONFIG_PATH)
+        
+        if not blob.exists():
+            logger.info("Prompt config doesn't exist, returning default")
+            return get_default_prompt_config()
+        
+        content = blob.download_as_string()
+        config = json.loads(content)
+        logger.info("Loaded prompt config")
+        return config
+    except Exception as e:
+        logger.error(f"Failed to load prompt config from GCS: {e}")
+        return get_default_prompt_config()
+
+
+def save_prompt_config(config: Dict[str, Any]) -> bool:
+    """Save prompt configuration to GCS."""
+    try:
+        client = get_storage_client()
+        bucket = client.bucket(GCS_BUCKET)
+        blob = bucket.blob(PROMPT_CONFIG_PATH)
+        
+        content = json.dumps(config, indent=2, default=str)
+        blob.upload_from_string(content, content_type="application/json")
+        
+        logger.info("Saved prompt config")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save prompt config to GCS: {e}")
+        return False
+
+
+def add_prompt_to_history(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Add current active prompt to history before updating.
+    Keep only last 10 versions.
+    """
+    if "active_prompt" in config:
+        history_entry = config["active_prompt"].copy()
+        config["history"].insert(0, history_entry)
+        
+        # Keep only last 10 versions
+        config["history"] = config["history"][:10]
+    
+    return config
+
+
+def update_prompt(template: str, updated_by: str = "admin") -> tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """
+    Update the active prompt template.
+    
+    Returns:
+        (success, error_message, updated_config)
+    """
+    # Validate template
+    is_valid, error = validate_prompt_template(template)
+    if not is_valid:
+        return False, error, None
+    
+    # Load current config
+    config = load_prompt_config()
+    
+    # Add current to history
+    config = add_prompt_to_history(config)
+    
+    # Update active prompt
+    config["active_prompt"]["template"] = template
+    config["active_prompt"]["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    config["active_prompt"]["updated_by"] = updated_by
+    config["active_prompt"]["version"] = config["active_prompt"].get("version", 0) + 1
+    
+    # Save
+    if save_prompt_config(config):
+        return True, None, config
+    else:
+        return False, "Failed to save configuration", None
+
+
+def reset_prompt_to_default() -> tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """Reset prompt to default configuration."""
+    config = load_prompt_config()
+    
+    # Add current to history before resetting
+    config = add_prompt_to_history(config)
+    
+    # Reset to default
+    default_config = get_default_prompt_config()
+    config["active_prompt"] = default_config["active_prompt"].copy()
+    config["active_prompt"]["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    config["active_prompt"]["updated_by"] = "system"
+    
+    # Save
+    if save_prompt_config(config):
+        return True, None, config
+    else:
+        return False, "Failed to save configuration", None
+
+
+def rollback_prompt(version: int) -> tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """
+    Rollback to a specific version from history.
+    
+    Args:
+        version: The version number to rollback to
+    
+    Returns:
+        (success, error_message, updated_config)
+    """
+    config = load_prompt_config()
+    
+    # Find the version in history
+    target_prompt = None
+    for historical_prompt in config["history"]:
+        if historical_prompt.get("version") == version:
+            target_prompt = historical_prompt
+            break
+    
+    if not target_prompt:
+        return False, f"Version {version} not found in history", None
+    
+    # Add current to history
+    config = add_prompt_to_history(config)
+    
+    # Restore the target version
+    config["active_prompt"] = target_prompt.copy()
+    config["active_prompt"]["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    config["active_prompt"]["updated_by"] = "system"
+    
+    # Save
+    if save_prompt_config(config):
+        return True, None, config
+    else:
+        return False, "Failed to save configuration", None
+

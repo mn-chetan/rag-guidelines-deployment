@@ -69,7 +69,28 @@ class Sidebar {
           }
         });
       } else {
-        link.href = url;
+        // Apply text fragment highlighting for web sources (same logic as response-renderer)
+        const shouldHighlight = snippet &&
+                                snippet.trim().length > 0 &&
+                                !url.includes('#') &&
+                                supportsTextFragments();
+
+        if (shouldHighlight) {
+          const fragment = extractTextFragment(snippet, { maxWords: 40 });
+          if (fragment) {
+            link.href = buildTextFragmentUrl(url, fragment);
+          } else {
+            link.href = url;
+          }
+        } else {
+          link.href = url;
+
+          // Tooltip for non-supporting browsers
+          if (!supportsTextFragments() && snippet) {
+            link.title = `Snippet: ${snippet.substring(0, 150)}${snippet.length > 150 ? '...' : ''}`;
+          }
+        }
+
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
       }

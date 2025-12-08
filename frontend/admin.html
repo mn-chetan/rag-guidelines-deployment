@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="css/styles.css?v=2.0">
     <link rel="stylesheet" href="css/admin.css?v=1.0">
 </head>
-<body>
+<body class="admin-page">
     <div class="admin-container">
         <!-- Header -->
         <header class="admin-header">
@@ -157,6 +157,131 @@
                     </div>
                 </div>
             </section>
+
+            <!-- Prompt Configuration Section -->
+            <section class="prompt-configuration">
+                <div class="section-header">
+                    <h2>
+                        <span class="material-symbols-outlined">edit_note</span>
+                        Prompt Configuration
+                        <span id="unsaved-indicator" class="unsaved-indicator hidden">●</span>
+                    </h2>
+                    <div class="version-info-container">
+                        <span id="version-info" class="version-badge">Version 1</span>
+                        <span id="last-updated-info" class="last-updated-text">Last updated: --</span>
+                    </div>
+                </div>
+
+                <div class="info-box">
+                    <h3>📝 How to Structure Your Prompt</h3>
+                    <p style="margin-bottom: 0.75rem; font-size: 0.875rem; color: var(--md-sys-color-on-surface-variant);">
+                        Customize how the AI assistant responds to auditor queries. The prompt below shows the current default structure as an example.
+                    </p>
+                    <div class="variables-grid">
+                        <div class="variable-item">
+                            <code>{{query}}</code>
+                            <span>User's question (required)</span>
+                        </div>
+                        <div class="variable-item">
+                            <code>{{context}}</code>
+                            <span>Retrieved guidelines from RAG (required)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prompt Editor -->
+                <div class="editor-container">
+                    <label for="prompt-editor">Default Prompt Template:</label>
+                    <textarea 
+                        id="prompt-editor" 
+                        class="prompt-editor"
+                        placeholder="You are the Guideline Assistant for media auditors. Your job is to give QUICK, CLEAR answers.
+
+CONTEXT:
+{{context}}
+
+QUESTION: {{query}}
+
+RESPOND IN THIS EXACT FORMAT:
+
+**Verdict**: [Flag / Don't Flag / Needs Review]
+
+**Why**:
+- [State the specific guideline rule that applies]
+- [Explain how the content violates/complies with that rule]
+
+**Guideline Reference**: [Which guideline section]
+
+**Related Questions**:
+- [Suggest a relevant follow-up question the auditor might ask]
+- [Suggest another related question about edge cases or variations]
+- [Suggest a question about a related guideline topic]
+
+RULES:
+- Lead with the verdict — auditors need fast answers
+- ALWAYS connect your reasoning to the specific guideline text
+- Be CONFIDENT. If guidelines cover a category (e.g., &quot;weapons&quot;), apply it clearly
+- Make the logical connection explicit: &quot;The guideline prohibits X, and this content shows Y, therefore...&quot;
+- Only say &quot;Needs Review&quot; if the guidelines genuinely don't cover this category
+- Keep it under 100 words unless complexity requires more
+- Use bullet points, not paragraphs
+- The Related Questions should be natural follow-ups an auditor would ask"
+                        rows="20"
+                    ></textarea>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="prompt-actions">
+                    <button id="save-prompt-btn" class="action-button primary">
+                        <span class="material-symbols-outlined">save</span>
+                        Save Changes
+                    </button>
+                    <button id="reset-prompt-btn" class="action-button secondary">
+                        <span class="material-symbols-outlined">restart_alt</span>
+                        Reset to Default
+                    </button>
+                    <button id="history-prompt-btn" class="action-button secondary">
+                        <span class="material-symbols-outlined">history</span>
+                        View History
+                    </button>
+                </div>
+
+                <!-- Status Message -->
+                <div id="prompt-status-message" class="status-message hidden"></div>
+
+                <!-- Preview Section -->
+                <div class="preview-section">
+                    <h3>Preview</h3>
+                    <div class="preview-controls">
+                        <div class="form-group">
+                            <label for="sample-query-input">Sample Query:</label>
+                            <input 
+                                type="text" 
+                                id="sample-query-input" 
+                                placeholder="Should I flag a wine bottle in the background?"
+                                value="Should I flag a wine bottle in the background?"
+                            >
+                        </div>
+                        <button id="preview-prompt-btn" class="action-button secondary">
+                            <span class="material-symbols-outlined">play_arrow</span>
+                            Test Prompt
+                        </button>
+                    </div>
+
+                    <!-- Preview Output -->
+                    <div id="preview-container" class="preview-container hidden">
+                        <div id="rendered-prompt-container" class="rendered-prompt-container hidden">
+                            <h4>Rendered Prompt (sent to Gemini):</h4>
+                            <pre id="rendered-prompt-text" class="rendered-prompt"></pre>
+                        </div>
+                        
+                        <h4>Generated Response:</h4>
+                        <div id="preview-output" class="preview-output">
+                            <!-- Preview response will appear here -->
+                        </div>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <!-- Footer -->
@@ -168,5 +293,6 @@
     <!-- Scripts -->
     <script src="js/api-client.js?v=2.1"></script>
     <script src="js/admin-app.js?v=1.0"></script>
+    <script src="js/admin-prompt.js?v=1.0"></script>
 </body>
 </html>
