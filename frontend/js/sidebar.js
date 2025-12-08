@@ -28,12 +28,16 @@ class Sidebar {
   /**
    * Update source links in sidebar
    * @param {Array} sources - Array of source objects with title and url
+   * @param {string} query - The user's query for text fragment matching
    */
-  updateSourceLinks(sources) {
+  updateSourceLinks(sources, query = '') {
     if (!this.sourceLinksContainer) {
       console.error('Source links container not found');
       return;
     }
+
+    // Store query for potential re-renders
+    this.currentQuery = query;
 
     // If no sources provided or empty array, show message
     if (!sources || sources.length === 0) {
@@ -69,14 +73,14 @@ class Sidebar {
           }
         });
       } else {
-        // Apply text fragment highlighting for web sources (same logic as response-renderer)
+        // Apply text fragment highlighting for web sources
         const shouldHighlight = snippet &&
                                 snippet.trim().length > 0 &&
                                 !url.includes('#') &&
                                 supportsTextFragments();
 
         if (shouldHighlight) {
-          const fragment = extractTextFragment(snippet, { maxWords: 40 });
+          const fragment = extractTextFragment(snippet, { query, maxWords: 10 });
           if (fragment) {
             link.href = buildTextFragmentUrl(url, fragment);
           } else {

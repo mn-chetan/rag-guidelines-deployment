@@ -94,13 +94,13 @@ class WebScraper:
     def _extract_with_trafilatura(self, html: str, url: str) -> Optional[Dict[str, str]]:
         """Extract content using trafilatura (best for articles)."""
         try:
-            # Extract main content
+            # Extract main content with markdown formatting to preserve structure
             content = trafilatura.extract(
                 html,
                 include_comments=False,
                 include_tables=True,
                 include_images=False,
-                output_format='txt',
+                output_format='markdown',  # Preserves headers, lists, and structure
                 url=url
             )
 

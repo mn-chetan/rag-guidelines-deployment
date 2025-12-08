@@ -74,7 +74,7 @@ class Conversation {
     
     // Update sidebar with latest response sources
     if (this.sidebar && typeof this.sidebar.updateSourceLinks === 'function' && completeEntry.sources.length > 0) {
-      this.sidebar.updateSourceLinks(completeEntry.sources);
+      this.sidebar.updateSourceLinks(completeEntry.sources, completeEntry.query || '');
     }
     
     // Auto-scroll to latest message
@@ -109,7 +109,7 @@ class Conversation {
         // Use ResponseRenderer for proper markdown formatting
         if (typeof ResponseRenderer !== 'undefined') {
           const renderer = new ResponseRenderer({ enableAnimations: false });
-          const rendered = renderer.render({ answer: updates.answer, sources: entry.sources || [] });
+          const rendered = renderer.render({ answer: updates.answer, sources: entry.sources || [] }, entry.query || '');
           responseContent.innerHTML = '';
           if (rendered instanceof HTMLElement) {
             responseContent.appendChild(rendered);
@@ -123,7 +123,7 @@ class Conversation {
       
       // Update sources if provided
       if (updates.sources && this.sidebar && typeof this.sidebar.updateSourceLinks === 'function') {
-        this.sidebar.updateSourceLinks(updates.sources);
+        this.sidebar.updateSourceLinks(updates.sources, entry.query || '');
       }
       
       // Auto-scroll if streaming

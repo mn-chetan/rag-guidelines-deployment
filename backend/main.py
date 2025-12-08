@@ -6,6 +6,7 @@ import asyncio
 import time
 import re
 import hashlib
+import markdown
 from datetime import datetime
 from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException
@@ -57,7 +58,7 @@ GCS_BUCKET = os.getenv("GCS_BUCKET", "rag-guidelines-v2")
 GCS_SCRAPED_FOLDER = os.getenv("GCS_SCRAPED_FOLDER", "scraped")
 
 # Performance tuning
-MAX_SNIPPETS_PER_DOC = 2  # Reduced for faster generation
+MAX_SNIPPETS_PER_DOC = 5  # Increased to capture more context per document
 PAGE_SIZE = 6  # Reduced for faster retrieval
 
 # Token limits per mode
@@ -229,6 +230,19 @@ def upload_to_gcs(content: str, url: str) -> str:
 
         logger.info(f"Uploading {url} (normalized: {normalized_url}) to {blob_path}")
 
+        # Convert markdown to HTML for better semantic structure
+        # This helps Discovery Engine extract better snippets with proper headers/lists
+        try:
+            # Convert markdown to HTML with extensions for better formatting
+            html_body = markdown.markdown(
+                content,
+                extensions=['extra', 'nl2br', 'sane_lists']
+            )
+        except Exception as e:
+            logger.warning(f"Markdown conversion failed, using plain text: {e}")
+            # Fallback: wrap plain content in paragraph tags
+            html_body = f"<p>{content.replace(chr(10), '</p><p>')}</p>"
+
         # Create HTML document with metadata
         html_content = f"""<!DOCTYPE html>
 <html>
@@ -240,7 +254,7 @@ def upload_to_gcs(content: str, url: str) -> str:
 </head>
 <body>
 <article>
-{content}
+{html_body}
 </article>
 </body>
 </html>

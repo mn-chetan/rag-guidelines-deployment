@@ -15,13 +15,17 @@ class ResponseRenderer {
    * @param {Object} response - The response object
    * @param {string} response.answer - The response text to render
    * @param {Array} response.sources - Array of source objects
+   * @param {string} query - The user's original query (for text fragment matching)
    * @returns {HTMLElement} The rendered response element
    */
-  render(response) {
+  render(response, query = '') {
     if (!response || typeof response.answer !== 'string') {
       console.error('Invalid response object');
       return this.createErrorElement('Unable to render response');
     }
+
+    // Store query for use in source rendering
+    this.currentQuery = query;
 
     // Create container
     const container = document.createElement('div');
@@ -33,7 +37,7 @@ class ResponseRenderer {
     
     // Render source citations if available
     if (response.sources && response.sources.length > 0) {
-      const sourcesElement = this.renderSources(response.sources);
+      const sourcesElement = this.renderSources(response.sources, query);
       container.appendChild(sourcesElement);
     }
     
@@ -413,9 +417,10 @@ class ResponseRenderer {
   /**
    * Render source citations
    * @param {Array} sources - Array of source objects
+   * @param {string} query - The user's query for text fragment matching
    * @returns {HTMLElement} The sources element
    */
-  renderSources(sources) {
+  renderSources(sources, query = '') {
     const container = document.createElement('div');
     container.className = 'source-citations';
     
@@ -428,7 +433,7 @@ class ResponseRenderer {
     linksContainer.className = 'source-citations-links';
     
     sources.forEach((source, index) => {
-      const link = this.renderSourceLink(source, index + 1);
+      const link = this.renderSourceLink(source, index + 1, query);
       linksContainer.appendChild(link);
     });
     
@@ -441,9 +446,10 @@ class ResponseRenderer {
    * Render a single source link
    * @param {Object} source - The source object
    * @param {number} index - The source index (for numbering)
+   * @param {string} query - The user's query for text fragment matching
    * @returns {HTMLElement} The source link element
    */
-  renderSourceLink(source, index) {
+  renderSourceLink(source, index, query = '') {
     const link = document.createElement('a');
     link.className = 'source-citation-link';
     link.setAttribute('aria-label', `Source ${index}: ${source.title || 'Untitled'}`);
@@ -472,7 +478,7 @@ class ResponseRenderer {
                               supportsTextFragments();
 
       if (shouldHighlight) {
-        const fragment = extractTextFragment(source.snippet, { maxWords: 40 });
+        const fragment = extractTextFragment(source.snippet, { query, maxWords: 10 });
         if (fragment) {
           link.href = buildTextFragmentUrl(url, fragment);
         } else {
