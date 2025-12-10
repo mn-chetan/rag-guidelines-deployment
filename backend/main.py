@@ -27,6 +27,8 @@ from admin import (
     load_prompt_config, update_prompt, reset_prompt_to_default,
     rollback_prompt, validate_prompt_template
 )
+from feedback import get_feedback_logger
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +37,10 @@ logger = logging.getLogger(__name__)
 background_tasks = {}
 
 # Cache for GCS metadata lookups (maps GCS path -> original URL)
-gcs_metadata_cache = {}
+# Using LRU cache with max 1000 entries to prevent unbounded memory growth
+from cachetools import LRUCache
+GCS_CACHE_MAX_SIZE = 1000
+gcs_metadata_cache = LRUCache(maxsize=GCS_CACHE_MAX_SIZE)
 
 app = FastAPI(title="Auditor Guidelines API")
 
@@ -117,6 +122,16 @@ class UpdatePromptRequest(BaseModel):
 class PreviewPromptRequest(BaseModel):
     template: str
     sample_query: str = "Should I flag a wine bottle in the background?"
+
+
+class FeedbackRequest(BaseModel):
+    query: str
+    response: str
+    rating: str  # "positive" or "negative"
+    session_id: str
+    sources: list = []
+    timestamp: int = None
+
 
 
 
@@ -728,6 +743,53 @@ def query(request: QueryRequest):
     except Exception as e:
         logger.error(f"Error processing query: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """
+    Submit user feedback (thumbs up/down) and log to BigQuery.
+    
+    This endpoint is fire-and-forget - it returns immediately even if
+    BigQuery logging fails, to avoid blocking the user experience.
+    """
+    try:
+        logger.info(f"Received feedback: {request.rating} for session {request.session_id}")
+        
+        # Get current prompt version
+        try:
+            prompt_config = await asyncio.to_thread(load_prompt_config)
+            prompt_version = prompt_config.get("active_prompt", {}).get("version", 1)
+        except Exception:
+            prompt_version = None
+        
+        # Log to BigQuery asynchronously (fire-and-forget)
+        feedback_logger = get_feedback_logger()
+        asyncio.create_task(
+            feedback_logger.log_feedback(
+                query=request.query,
+                response=request.response,
+                rating=request.rating,
+                session_id=request.session_id,
+                sources=request.sources,
+                model_version=MODEL_ID,
+                prompt_version=prompt_version
+            )
+        )
+        
+        return {
+            "status": "success",
+            "message": "Feedback received"
+        }
+        
+    except Exception as e:
+        # Log error but don't fail the request
+        logger.error(f"Error processing feedback: {e}")
+        return {
+            "status": "success",
+            "message": "Feedback received"
+        }
+
 
 
 @app.post("/index-url", response_model=IndexURLResponse)

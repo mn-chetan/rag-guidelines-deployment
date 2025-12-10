@@ -2309,3 +2309,164 @@ body.pdf-viewer-open .main-content {
 .sidebar *:focus-visible {
     outline-color: var(--md-sys-color-inverse-primary);
 }
+
+/* ============================================
+   Confirmation Dialog
+   ============================================ */
+
+.confirmation-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard);
+}
+
+.confirmation-dialog-overlay.confirmation-dialog-open {
+  opacity: 1;
+}
+
+.confirmation-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background-color: var(--md-sys-color-scrim);
+  opacity: 0.32;
+  backdrop-filter: blur(4px);
+}
+
+.confirmation-dialog {
+  position: relative;
+  z-index: 1;
+  min-width: 280px;
+  max-width: 560px;
+  background-color: var(--md-sys-color-surface-container-high);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  box-shadow: var(--md-sys-elevation-5);
+  transform: scale(0.9);
+  transition: transform var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-emphasized);
+}
+
+.confirmation-dialog-open .confirmation-dialog {
+  transform: scale(1);
+}
+
+.confirmation-dialog-header {
+  padding: var(--md-sys-spacing-24) var(--md-sys-spacing-24) var(--md-sys-spacing-16);
+}
+
+.confirmation-dialog-title {
+  font-size: var(--font-headline-small-size);
+  font-weight: var(--font-weight-normal);
+  color: var(--md-sys-color-on-surface);
+  margin: 0;
+}
+
+.confirmation-dialog-body {
+  padding: 0 var(--md-sys-spacing-24) var(--md-sys-spacing-24);
+}
+
+.confirmation-dialog-message {
+  font-size: var(--font-body-medium-size);
+  line-height: var(--font-body-medium-line-height);
+  color: var(--md-sys-color-on-surface-variant);
+  margin: 0;
+}
+
+.confirmation-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--md-sys-spacing-8);
+  padding: var(--md-sys-spacing-16) var(--md-sys-spacing-24) var(--md-sys-spacing-24);
+}
+
+.confirmation-btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  font-size: var(--font-label-large-size);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+  position: relative;
+}
+
+.confirmation-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity var(--md-sys-motion-duration-short4);
+  pointer-events: none;
+}
+
+.confirmation-btn:hover::before {
+  opacity: 0.08;
+}
+
+.confirmation-btn:active::before {
+  opacity: 0.12;
+}
+
+.confirmation-btn-cancel {
+  background-color: transparent;
+  color: var(--md-sys-color-primary);
+}
+
+.confirmation-btn-cancel::before {
+  background-color: var(--md-sys-color-primary);
+}
+
+.confirmation-btn-confirm {
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+.confirmation-btn-confirm::before {
+  background-color: var(--md-sys-color-on-primary);
+}
+
+/* Variant: Danger */
+.confirmation-dialog-danger .confirmation-dialog-title {
+  color: var(--md-sys-color-error);
+}
+
+.confirmation-btn-danger {
+  background-color: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+}
+
+.confirmation-btn-danger::before {
+  background-color: var(--md-sys-color-on-error);
+}
+
+/* Variant: Warning */
+.confirmation-dialog-warning .confirmation-dialog-title {
+  color: var(--md-sys-color-warning);
+}
+
+.confirmation-btn-warning {
+  background-color: var(--md-sys-color-warning);
+  color: var(--md-sys-color-on-warning);
+}
+
+.confirmation-btn-warning::before {
+  background-color: var(--md-sys-color-on-warning);
+}
+
+/* Variant: Info */
+.confirmation-dialog-info .confirmation-dialog-title {
+  color: var(--md-sys-color-primary);
+}
+
+.confirmation-btn-info {
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+.confirmation-btn-info::before {
+  background-color: var(--md-sys-color-on-primary);
+}

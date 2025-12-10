@@ -280,10 +280,27 @@ class SessionManager {
    * Delete a session by ID
    * @param {string} sessionId - The session ID to delete
    */
-  deleteSession(sessionId) {
+  async deleteSession(sessionId) {
     // Don't delete current session
     if (sessionId === this.currentSessionId) {
       console.warn('Cannot delete current session');
+      return;
+    }
+    
+    // Get session title for confirmation message
+    const session = this.sessions.find(s => s.id === sessionId);
+    const sessionTitle = session ? session.title : 'this conversation';
+    
+    // Show confirmation dialog
+    const confirmed = await confirmationDialog.show({
+      title: 'Delete Conversation?',
+      message: `Delete "${sessionTitle}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger'
+    });
+    
+    if (!confirmed) {
       return;
     }
     

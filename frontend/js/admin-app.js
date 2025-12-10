@@ -250,7 +250,15 @@ class AdminApp {
     }
 
     async deleteUrl(urlId, urlName) {
-        if (!confirm(`Are you sure you want to remove "${urlName}"?`)) {
+        const confirmed = await confirmationDialog.show({
+            title: 'Remove URL?',
+            message: `Remove "${urlName}" from managed URLs? This cannot be undone.`,
+            confirmText: 'Remove',
+            cancelText: 'Cancel',
+            variant: 'danger'
+        });
+        
+        if (!confirmed) {
             return;
         }
         
@@ -308,6 +316,18 @@ class AdminApp {
     // ==================== Bulk Operations ====================
 
     async recrawlAll() {
+        const confirmed = await confirmationDialog.show({
+            title: 'Re-crawl All URLs?',
+            message: `This will re-index ${this.urls.length} URL${this.urls.length !== 1 ? 's' : ''}. Continue?`,
+            confirmText: 'Start Re-crawl',
+            cancelText: 'Cancel',
+            variant: 'warning'
+        });
+        
+        if (!confirmed) {
+            return;
+        }
+        
         this.recrawlAllBtn.disabled = true;
         this.recrawlAllBtn.classList.add('loading');
         
