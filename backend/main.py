@@ -28,6 +28,7 @@ from admin import (
     rollback_prompt, validate_prompt_template
 )
 from feedback import get_feedback_logger
+from retriever import retriever, GuidelineRetriever
 
 
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +62,9 @@ DATA_STORE_ID = os.getenv("DATA_STORE_ID", "guidelines-data-store_1763919919982"
 MODEL_ID = "gemini-2.5-flash"
 GCS_BUCKET = os.getenv("GCS_BUCKET", "rag-guidelines-v2")
 GCS_SCRAPED_FOLDER = os.getenv("GCS_SCRAPED_FOLDER", "scraped")
+
+# Custom RAG feature flag
+USE_CUSTOM_RAG = os.getenv("USE_CUSTOM_RAG", "false").lower() == "true"
 
 # Performance tuning
 MAX_SNIPPETS_PER_DOC = 8  # Increased to capture more context per document
@@ -341,8 +345,8 @@ def trigger_discovery_engine_import() -> dict:
         raise
 
 
-async def retrieve_snippets(query: str, page_size: int = PAGE_SIZE, max_snippets: int = MAX_SNIPPETS_PER_DOC) -> list:
-    """Fast retrieval - snippets only, no summary generation.
+async def discovery_engine_retrieve(query: str, page_size: int = PAGE_SIZE, max_snippets: int = MAX_SNIPPETS_PER_DOC) -> list:
+    """Fast retrieval using Discovery Engine (original implementation).
     
     Args:
         query: The search query
@@ -493,11 +497,38 @@ async def retrieve_snippets(query: str, page_size: int = PAGE_SIZE, max_snippets
                 if s['link'].startswith('gs://'):
                     logger.error(f"   - GCS URL being returned: {s['link']}")
 
-        logger.info(f"Search returned {len(sources)} sources")
+        logger.info(f"Discovery Engine search returned {len(sources)} sources")
         return sources
     except Exception as e:
-        logger.error(f"Search failed: {e}")
+        logger.error(f"Discovery Engine search failed: {e}")
         return []
+
+
+async def retrieve_snippets(query: str, page_size: int = PAGE_SIZE, max_snippets: int = MAX_SNIPPETS_PER_DOC) -> list:
+    """Retrieve relevant snippets using configured backend.
+    
+    Uses custom RAG if enabled and initialized, otherwise falls back to Discovery Engine.
+    
+    Args:
+        query: The search query
+        page_size: Number of documents to retrieve (for Discovery Engine)
+        max_snippets: Max snippets per document (for Discovery Engine)
+    
+    Returns:
+        List of source dictionaries
+    """
+    if USE_CUSTOM_RAG and retriever._initialized:
+        try:
+            logger.info("Using custom RAG for retrieval")
+            # Custom RAG returns top_k results (default 6)
+            # Ignore page_size/max_snippets as they're Discovery Engine specific
+            return await asyncio.to_thread(retriever.retrieve, query, top_k=6)
+        except Exception as e:
+            logger.error(f"Custom RAG failed, falling back to Discovery Engine: {e}")
+            return await discovery_engine_retrieve(query, page_size, max_snippets)
+    else:
+        logger.info("Using Discovery Engine for retrieval")
+        return await discovery_engine_retrieve(query, page_size, max_snippets)
 
 
 
@@ -889,6 +920,21 @@ async def index_url(request: IndexURLRequest):
 
         # Step 3: Trigger Discovery Engine import
         import_result = await asyncio.to_thread(trigger_discovery_engine_import)
+        
+        # Step 4: Index in custom RAG if enabled
+        if USE_CUSTOM_RAG and retriever._initialized:
+            try:
+                chunks_created = await asyncio.to_thread(
+                    retriever.index_document,
+                    scrape_result["content"],
+                    request.url,
+                    scrape_result.get("title", ""),
+                    "html"
+                )
+                logger.info(f"Custom RAG: Indexed {chunks_created} chunks for {request.url}")
+            except Exception as e:
+                logger.error(f"Failed to index in custom RAG: {e}")
+                # Don't fail the request - Discovery Engine indexing succeeded
 
         logger.info(f"Successfully indexed {request.url} -> {file_path}")
 
@@ -912,9 +958,21 @@ async def index_url(request: IndexURLRequest):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize config on startup if needed."""
+    """Initialize config and retriever on startup."""
     await asyncio.to_thread(initialize_config_if_needed)
     logger.info("Admin config initialized")
+    
+    # Initialize custom RAG if enabled
+    if USE_CUSTOM_RAG:
+        try:
+            logger.info("Initializing custom RAG retriever...")
+            await asyncio.to_thread(retriever.initialize)
+            logger.info("✓ Custom RAG retriever initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize custom RAG: {e}")
+            logger.warning("Will fall back to Discovery Engine for queries")
+    else:
+        logger.info("Custom RAG disabled - using Discovery Engine")
 
 
 @app.get("/admin/urls")
@@ -1350,6 +1408,159 @@ async def rollback_prompt_version(version: int):
         "message": f"Rolled back to version {version}",
         "active_prompt": config.get("active_prompt")
     }
+
+
+# ==================== CUSTOM RAG ADMIN ENDPOINTS ====================
+
+@app.get("/admin/rag/stats")
+async def get_rag_stats():
+    """Get custom RAG index statistics."""
+    if not USE_CUSTOM_RAG:
+        return {
+            "enabled": False,
+            "message": "Custom RAG not enabled. Set USE_CUSTOM_RAG=true to enable."
+        }
+    
+    if not retriever._initialized:
+        return {
+            "enabled": True,
+            "initialized": False,
+            "message": "Custom RAG enabled but not initialized"
+        }
+    
+    try:
+        stats = await asyncio.to_thread(retriever.get_stats)
+        return {
+            "enabled": True,
+            "initialized": True,
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"Failed to get RAG stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/rag/reindex")
+async def trigger_reindex():
+    """Trigger full reindex of all managed URLs in custom RAG."""
+    if not USE_CUSTOM_RAG:
+        raise HTTPException(
+            status_code=400,
+            detail="Custom RAG not enabled. Set USE_CUSTOM_RAG=true to enable."
+        )
+    
+    if not retriever._initialized:
+        raise HTTPException(
+            status_code=503,
+            detail="Custom RAG not initialized"
+        )
+    
+    try:
+        # Get all managed URLs
+        config = await asyncio.to_thread(load_managed_urls)
+        urls = config.get("urls", [])
+        
+        if not urls:
+            return {
+                "status": "error",
+                "message": "No URLs to reindex"
+            }
+        
+        # Start reindex in background
+        asyncio.create_task(run_custom_rag_reindex(urls))
+        
+        return {
+            "status": "started",
+            "message": f"Started reindexing {len(urls)} URLs in custom RAG",
+            "url_count": len(urls)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to trigger reindex: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def run_custom_rag_reindex(urls: list):
+    """Background task for full custom RAG reindex."""
+    logger.info(f"Starting custom RAG reindex for {len(urls)} URLs")
+    
+    documents = []
+    
+    for url_entry in urls:
+        url = url_entry["url"]
+        name = url_entry["name"]
+        
+        try:
+            # Check if file exists in GCS
+            file_exists = await asyncio.to_thread(gcs_file_exists, url)
+            
+            if not file_exists:
+                logger.warning(f"No GCS file found for {url}, skipping")
+                continue
+            
+            # Download content from GCS
+            normalized_url = normalize_url(url)
+            parsed = urlparse(normalized_url)
+            domain = parsed.netloc.replace("www.", "")
+            url_hash = hashlib.sha256(normalized_url.encode('utf-8')).hexdigest()[:16]
+            filename = f"{domain}_{url_hash}.html"
+            blob_path = f"{GCS_SCRAPED_FOLDER}/{filename}"
+            
+            bucket = storage_client.bucket(GCS_BUCKET)
+            blob = bucket.blob(blob_path)
+            content = await asyncio.to_thread(blob.download_as_text)
+            
+            documents.append({
+                "url": url,
+                "title": name,
+                "content": content,
+                "content_type": "html"
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to load {url} for reindex: {e}")
+    
+    # Perform reindex
+    try:
+        stats = await asyncio.to_thread(retriever.reindex_all, documents)
+        logger.info(
+            f"Custom RAG reindex complete: {stats['success_count']}/{stats['total_docs']} "
+            f"documents, {stats['total_chunks']} chunks"
+        )
+    except Exception as e:
+        logger.error(f"Custom RAG reindex failed: {e}")
+
+
+@app.delete("/admin/rag/document")
+async def delete_rag_document(url: str):
+    """Delete a document from custom RAG indexes."""
+    if not USE_CUSTOM_RAG:
+        raise HTTPException(
+            status_code=400,
+            detail="Custom RAG not enabled"
+        )
+    
+    if not retriever._initialized:
+        raise HTTPException(
+            status_code=503,
+            detail="Custom RAG not initialized"
+        )
+    
+    try:
+        deleted_count = await asyncio.to_thread(retriever.delete_document, url)
+        
+        return {
+            "status": "success",
+            "message": f"Deleted {deleted_count} chunks for {url}",
+            "chunks_deleted": deleted_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to delete document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 
 
 
