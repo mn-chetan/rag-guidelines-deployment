@@ -58,19 +58,19 @@ PROJECT_ID = os.getenv("PROJECT_ID", "rag-for-guidelines")
 LOCATION = os.getenv("LOCATION", "global")
 GENAI_LOCATION = os.getenv("GENAI_LOCATION", "us-central1")
 DATA_STORE_ID = os.getenv("DATA_STORE_ID", "guidelines-data-store_1763919919982")
-MODEL_ID = "gemini-2.5-flash-lite"
+MODEL_ID = "gemini-2.5-flash"
 GCS_BUCKET = os.getenv("GCS_BUCKET", "rag-guidelines-v2")
 GCS_SCRAPED_FOLDER = os.getenv("GCS_SCRAPED_FOLDER", "scraped")
 
 # Performance tuning
-MAX_SNIPPETS_PER_DOC = 5  # Increased to capture more context per document
-PAGE_SIZE = 6  # Reduced for faster retrieval
+MAX_SNIPPETS_PER_DOC = 8  # Increased to capture more context per document
+PAGE_SIZE = 10  # Balanced for quality and speed
 
 # Token limits per mode
 TOKEN_LIMITS = {
-    "default": 768,
-    "shorter": 256,
-    "more": 2048
+    "default": 1536,
+    "shorter": 512,
+    "more": 4096
 }
 
 # Initialize Vertex AI
@@ -341,8 +341,14 @@ def trigger_discovery_engine_import() -> dict:
         raise
 
 
-def retrieve_snippets(query: str) -> list:
-    """Fast retrieval - snippets only, no summary generation."""
+async def retrieve_snippets(query: str, page_size: int = PAGE_SIZE, max_snippets: int = MAX_SNIPPETS_PER_DOC) -> list:
+    """Fast retrieval - snippets only, no summary generation.
+    
+    Args:
+        query: The search query
+        page_size: Number of documents to retrieve (default: global PAGE_SIZE)
+        max_snippets: Max snippets per document (default: global MAX_SNIPPETS_PER_DOC)
+    """
     serving_config = (
         f"projects/{PROJECT_ID}/locations/{LOCATION}"
         f"/dataStores/{DATA_STORE_ID}/servingConfigs/default_search"
@@ -351,19 +357,66 @@ def retrieve_snippets(query: str) -> list:
     request = discoveryengine.SearchRequest(
         serving_config=serving_config,
         query=query,
-        page_size=PAGE_SIZE,
+        page_size=page_size,
+        query_expansion_spec=discoveryengine.SearchRequest.QueryExpansionSpec(
+            condition=discoveryengine.SearchRequest.QueryExpansionSpec.Condition.AUTO
+        ),
+        spell_correction_spec=discoveryengine.SearchRequest.SpellCorrectionSpec(
+            mode=discoveryengine.SearchRequest.SpellCorrectionSpec.Mode.AUTO
+        ),
         content_search_spec=discoveryengine.SearchRequest.ContentSearchSpec(
             snippet_spec=discoveryengine.SearchRequest.ContentSearchSpec.SnippetSpec(
                 return_snippet=True,
-                max_snippet_count=MAX_SNIPPETS_PER_DOC
+                max_snippet_count=max_snippets
             ),
         ),
     )
 
     try:
-        response = search_client.search(request=request, timeout=30.0)
+        # Run search in thread pool since it's a blocking gRPC call
+        response = await asyncio.to_thread(
+            search_client.search, 
+            request=request, 
+            timeout=30.0
+        )
         
-        sources = []
+        # Helper function for async GCS metadata lookup
+        async def fetch_gcs_metadata(link):
+            if not link.startswith("gs://"):
+                return None
+                
+            # Check cache first
+            if link in gcs_metadata_cache:
+                logger.debug(f"Retrieved original URL from cache: {gcs_metadata_cache[link]}")
+                return gcs_metadata_cache[link]
+            
+            try:
+                # Parse GCS path: gs://bucket-name/path/to/file.html
+                gcs_path = link.replace(f"gs://{GCS_BUCKET}/", "")
+                bucket = storage_client.bucket(GCS_BUCKET)
+                blob = bucket.blob(gcs_path)
+
+                # Run blocking GCS call in thread pool
+                exists = await asyncio.to_thread(blob.exists)
+                if exists:
+                    await asyncio.to_thread(blob.reload)  # Load metadata
+                    if blob.metadata and "source_url" in blob.metadata:
+                        original_url = blob.metadata["source_url"]
+                        gcs_metadata_cache[link] = original_url  # Cache it
+                        logger.info(f"Retrieved original URL from GCS metadata: {original_url}")
+                        return original_url
+                    else:
+                        logger.warning(f"GCS blob {gcs_path} has no source_url metadata")
+                else:
+                    logger.warning(f"GCS blob {gcs_path} does not exist")
+            except Exception as e:
+                logger.error(f"Failed to fetch GCS metadata for {link}: {e}")
+            return None
+
+        # Process results and collect GCS lookup tasks
+        processed_results = []
+        gcs_tasks = []
+        
         for result in response.results:
             doc = result.document
             doc_dict = MessageToDict(doc._pb)
@@ -373,11 +426,7 @@ def retrieve_snippets(query: str) -> list:
             title = derived.get("title", derived.get("link", "Document"))
             link = derived.get("link", "")
 
-            # Try to get original URL from multiple possible locations:
-            # 1. derivedStructData.source (extracted from <meta name="source">)
-            # 2. structData.source (if manually set)
-            # 3. derivedStructData.extractedMetadata.source
-            # 4. GCS blob custom metadata (source_url)
+            # Try to get original URL from multiple possible locations
             original_url = (
                 derived.get("source") or
                 struct_data.get("source") or
@@ -385,51 +434,50 @@ def retrieve_snippets(query: str) -> list:
                 struct_data.get("source_url") or  # GCS custom metadata
                 ""
             )
-
-            # Fallback: Try to fetch original URL from GCS blob metadata if we have a GCS path
+            
+            # Prepare result object
+            result_obj = {
+                "title": title,
+                "link": link,
+                "original_url": original_url,
+                "snippets": derived.get("snippets", []),
+                "gcs_task_index": -1
+            }
+            
+            # If we need GCS lookup, add to tasks
             if not original_url and link.startswith("gs://"):
-                # Check cache first
-                if link in gcs_metadata_cache:
-                    original_url = gcs_metadata_cache[link]
-                    logger.debug(f"Retrieved original URL from cache: {original_url}")
-                else:
-                    try:
-                        # Parse GCS path: gs://bucket-name/path/to/file.html
-                        gcs_path = link.replace(f"gs://{GCS_BUCKET}/", "")
-                        bucket = storage_client.bucket(GCS_BUCKET)
-                        blob = bucket.blob(gcs_path)
+                result_obj["gcs_task_index"] = len(gcs_tasks)
+                gcs_tasks.append(fetch_gcs_metadata(link))
+            
+            processed_results.append(result_obj)
+        
+        # Execute all GCS lookups in parallel
+        if gcs_tasks:
+            gcs_urls = await asyncio.gather(*gcs_tasks)
+            
+            # Assign results back
+            for res in processed_results:
+                if res["gcs_task_index"] >= 0:
+                    fetched_url = gcs_urls[res["gcs_task_index"]]
+                    if fetched_url:
+                        res["original_url"] = fetched_url
+                    else:
+                        logger.warning(f"No original URL found for GCS document: {res['link']}. Using GCS path as fallback.")
 
-                        # Try to get metadata from the blob
-                        if blob.exists():
-                            blob.reload()  # Load metadata
-                            if blob.metadata and "source_url" in blob.metadata:
-                                original_url = blob.metadata["source_url"]
-                                gcs_metadata_cache[link] = original_url  # Cache it
-                                logger.info(f"Retrieved original URL from GCS metadata: {original_url}")
-                            else:
-                                logger.warning(f"GCS blob {gcs_path} has no source_url metadata")
-                        else:
-                            logger.warning(f"GCS blob {gcs_path} does not exist")
-                    except Exception as e:
-                        logger.error(f"Failed to fetch GCS metadata for {link}: {e}")
-
-            # Use original URL if available, otherwise fall back to link (GCS path or other)
-            final_link = original_url if original_url else link
-
-            # Debug logging
-            if not original_url and link.startswith("gs://"):
-                logger.warning(f"No original URL found for GCS document: {link}. Using GCS path as fallback.")
-
-            snippets = derived.get("snippets", [])
+        # Finalize sources list
+        sources = []
+        for res in processed_results:
+            final_link = res["original_url"] if res["original_url"] else res["link"]
+            
             snippet_texts = [
                 clean_snippet_html(s.get("snippet", ""))
-                for s in snippets
+                for s in res["snippets"]
                 if s.get("snippet")
             ]
             combined_text = "\n".join(snippet_texts) if snippet_texts else ""
-
+            
             sources.append({
-                "title": title,
+                "title": res["title"],
                 "link": final_link,
                 "snippet": combined_text
             })
@@ -470,7 +518,7 @@ def generate_with_gemini(query: str, sources: list, modification: str = None) ->
 
     try:
         generation_config = GenerationConfig(
-            temperature=0.2,
+            temperature=0.4,
             max_output_tokens=token_limit
         )
         response = gemini_model.generate_content(prompt, generation_config=generation_config)
@@ -622,9 +670,22 @@ async def query_stream(request: QueryRequest):
     try:
         logger.info(f"Processing streaming query: {request.query}")
 
-        # Retrieve from Discovery Engine (run in thread pool to avoid blocking)
+        # Determine retrieval parameters based on mode
+        current_page_size = PAGE_SIZE
+        current_max_snippets = MAX_SNIPPETS_PER_DOC
+        
+        if request.modification == "shorter":
+            current_page_size = 3
+            current_max_snippets = 1
+            logger.info("Quick Answer Mode activated: Reduced retrieval scope")
+
+        # Retrieve from Discovery Engine
         retrieval_start = time.time()
-        sources = await asyncio.to_thread(retrieve_snippets, request.query)
+        sources = await retrieve_snippets(
+            request.query, 
+            page_size=current_page_size, 
+            max_snippets=current_max_snippets
+        )
         retrieval_time = time.time() - retrieval_start
         logger.info(f"Retrieval took {retrieval_time:.2f}s")
         
@@ -647,7 +708,7 @@ async def query_stream(request: QueryRequest):
         token_limit = TOKEN_LIMITS.get(request.modification, TOKEN_LIMITS["default"])
         
         generation_config = GenerationConfig(
-            temperature=0.2,
+            temperature=0.4,
             max_output_tokens=token_limit
         )
         
@@ -724,7 +785,7 @@ async def query_stream(request: QueryRequest):
 
 
 @app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest):
+async def query(request: QueryRequest):
     """Non-streaming endpoint (fallback for compatibility)."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
@@ -733,10 +794,10 @@ def query(request: QueryRequest):
         logger.info(f"Processing query: {request.query}, modification: {request.modification}")
 
         # Retrieve from Discovery Engine (fast - no summary)
-        sources = retrieve_snippets(request.query)
+        sources = await retrieve_snippets(request.query)
 
         # Generate with Gemini
-        answer = generate_with_gemini(request.query, sources, request.modification)
+        answer = await asyncio.to_thread(generate_with_gemini, request.query, sources, request.modification)
 
         return QueryResponse(answer=answer, sources=sources)
 
@@ -1200,7 +1261,7 @@ async def preview_prompt_config(request: PreviewPromptRequest):
     
     try:
         # Retrieve context for the sample query
-        sources = await asyncio.to_thread(retrieve_snippets, request.sample_query)
+        sources = await retrieve_snippets(request.sample_query)
         
         # Build context
         context_text = ""
@@ -1217,7 +1278,7 @@ async def preview_prompt_config(request: PreviewPromptRequest):
         # Generate response using Gemini
         try:
             generation_config = GenerationConfig(
-                temperature=0.2,
+                temperature=0.4,
                 max_output_tokens=TOKEN_LIMITS["default"]
             )
             response = gemini_model.generate_content(rendered_prompt, generation_config=generation_config)

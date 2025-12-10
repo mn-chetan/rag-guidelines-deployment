@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY scraper.py .
 COPY admin.py .
+COPY feedback.py .
 
 EXPOSE 8080
 
