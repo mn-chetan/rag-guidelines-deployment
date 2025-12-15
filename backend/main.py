@@ -58,12 +58,12 @@ PROJECT_ID = os.getenv("PROJECT_ID", "rag-for-guidelines")
 LOCATION = os.getenv("LOCATION", "global")
 GENAI_LOCATION = os.getenv("GENAI_LOCATION", "us-central1")
 DATA_STORE_ID = os.getenv("DATA_STORE_ID", "guidelines-data-store_1763919919982")
-MODEL_ID = "gemini-2.5-flash"
+MODEL_ID = "gemini-2.5-flash-lite"
 GCS_BUCKET = os.getenv("GCS_BUCKET", "rag-guidelines-v2")
 GCS_SCRAPED_FOLDER = os.getenv("GCS_SCRAPED_FOLDER", "scraped")
 
 # Performance tuning
-MAX_SNIPPETS_PER_DOC = 8  # Increased to capture more context per document
+MAX_SNIPPETS_PER_DOC = 5  # Maximum allowed by Discovery Engine API (0-5)
 PAGE_SIZE = 10  # Balanced for quality and speed
 
 # Token limits per mode
@@ -564,9 +564,49 @@ def get_pdf():
 
 
 def build_prompt(query: str, context_text: str, modification: str = None) -> str:
-    """Build prompt for Gemini."""
+    """Build prompt for Gemini, always using admin-configurable template."""
     
-    if modification == "shorter":
+    try:
+        # ALWAYS load from config (for all modification types)
+        config = load_prompt_config()
+        template = config["active_prompt"]["template"]
+        
+        # Replace template variables with actual values
+        base_prompt = (template
+            .replace("{{context}}", context_text)
+            .replace("{{query}}", query))
+        
+        # Wrap with meta-instructions based on modification type
+        if modification == "shorter":
+            final_prompt = f"""**OVERRIDE INSTRUCTION**: Respond briefly and concisely. IGNORE any word count limits or detailed formatting in the prompt below. Give ONLY:
+1. The verdict (Flag/Don't Flag)
+2. One sentence explaining why
+
+Keep your response under 50 words total.
+
+{base_prompt}"""
+        
+        elif modification == "more":
+            final_prompt = f"""**OVERRIDE INSTRUCTION**: Provide a comprehensive and detailed answer. IGNORE any word limits (like "under 200 words") in the prompt below. Your response should be thorough and include:
+- Full explanation with all relevant details
+- Edge cases and exceptions  
+- Specific examples from guidelines if available
+- Complete context and thorough reasoning
+- All relevant policy nuances
+
+Do NOT output template placeholders like "[State the specific guideline rule]" - fill them in with actual content.
+
+{base_prompt}"""
+        
+        else:
+            # Default: use prompt as-is without any wrapper
+            final_prompt = base_prompt
+        
+        return final_prompt
+        
+    except Exception as e:
+        logger.error(f"Failed to load prompt config, using hardcoded fallback: {e}")
+        # Fallback to basic prompt if config loading fails
         return f"""You are the Guideline Assistant for media auditors.
 
 CONTEXT:
@@ -574,88 +614,7 @@ CONTEXT:
 
 QUESTION: {query}
 
-Give ONLY:
-1. **Verdict**: Flag / Don't Flag / Needs Review
-2. **Reason**: One sentence why
-
-**Related Questions**:
-- [One relevant follow-up question]
-
-Nothing else. Be direct."""
-
-    elif modification == "more":
-        return f"""You are the Guideline Assistant for media auditors who rate content according to guidelines.
-
-CONTEXT:
-{context_text}
-
-QUESTION: {query}
-
-Provide a COMPREHENSIVE answer:
-
-1. **Verdict**: Flag / Don't Flag / Needs Review
-
-2. **Explanation**: Detailed reasoning with all relevant guidelines
-
-3. **Edge Cases**: Cover variations and exceptions
-   - What if the content is partially visible?
-   - What if it's in the background vs focal point?
-   - Any size/prominence considerations?
-
-4. **Examples**: Specific examples from guidelines if available
-
-5. **References**: Cite the specific guideline sections
-
-**Related Questions**:
-- [Suggest a relevant follow-up question]
-- [Suggest another related question about edge cases]
-- [Suggest a question about a related guideline topic]
-
-Use bullet points for readability. Be thorough — the auditor wants full context."""
-
-    else:
-        # Default: Load from config
-        try:
-            config = load_prompt_config()
-            template = config["active_prompt"]["template"]
-            
-            # Replace template variables
-            prompt = template.replace("{{context}}", context_text).replace("{{query}}", query)
-            return prompt
-        except Exception as e:
-            logger.error(f"Failed to load prompt config, using hardcoded default: {e}")
-            # Fallback to hardcoded default
-            return f"""You are the Guideline Assistant for media auditors. Your job is to give QUICK, CLEAR answers.
-
-CONTEXT:
-{context_text}
-
-QUESTION: {query}
-
-RESPOND IN THIS EXACT FORMAT:
-
-**Verdict**: [Flag / Don't Flag / Needs Review]
-
-**Why**:
-- [State the specific guideline rule that applies]
-- [Explain how the content violates/complies with that rule]
-
-**Guideline Reference**: [Which guideline section]
-
-**Related Questions**:
-- [Suggest a relevant follow-up question the auditor might ask]
-- [Suggest another related question about edge cases or variations]
-- [Suggest a question about a related guideline topic]
-
-RULES:
-- Lead with the verdict — auditors need fast answers
-- ALWAYS connect your reasoning to the specific guideline text
-- Be CONFIDENT. If guidelines cover a category (e.g., "weapons"), apply it clearly
-- Make the logical connection explicit: "The guideline prohibits X, and this content shows Y, therefore..."
-- Only say "Needs Review" if the guidelines genuinely don't cover this category
-- Keep it under 100 words unless complexity requires more
-- Use bullet points, not paragraphs
-- The Related Questions should be natural follow-ups an auditor would ask"""
+Provide a clear verdict (Flag / Don't Flag / Needs Review) with reasoning based on the guidelines."""
 
 
 
