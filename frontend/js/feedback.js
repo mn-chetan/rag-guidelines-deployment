@@ -57,43 +57,46 @@ class Feedback {
   async handleFeedbackClick(button) {
     const feedbackType = button.dataset.feedback;
     const entryElement = button.closest('.conversation-entry');
-    
+
     if (!entryElement) {
       console.error('Could not find conversation entry');
       return;
     }
-    
+
     const entryId = entryElement.dataset.entryId;
     const entry = this.conversation ? this.conversation.getEntryById(entryId) : null;
-    
+
     if (!entry) {
       console.error('Could not find entry in conversation');
       return;
     }
-    
+
+    // Store previous state for rollback
+    const previousFeedback = this.feedbackState.get(entryId) || null;
+
     // Check if this is toggling off existing feedback
-    const currentFeedback = this.feedbackState.get(entryId);
-    const newFeedback = currentFeedback === feedbackType ? null : feedbackType;
-    
-    // Update state
+    const newFeedback = previousFeedback === feedbackType ? null : feedbackType;
+
+    // Optimistic update - update state and UI immediately
     this.setFeedbackState(entryId, newFeedback);
-    
-    // Update UI to show selected feedback option
     this.updateFeedbackUI(entryElement, newFeedback);
-    
+
     // Update conversation entry
     if (this.conversation) {
       this.conversation.updateEntry(entryId, {
         feedback: newFeedback
       });
     }
-    
+
     // Show visual confirmation
     this.showFeedbackConfirmation(button, newFeedback);
-    
-    // Send feedback to backend API
+
+    // Send feedback to backend API and rollback on failure
     if (newFeedback) {
-      await this.submitFeedback(entry, newFeedback);
+      const success = await this.submitFeedback(entry, newFeedback, entryId, entryElement, previousFeedback);
+      if (!success) {
+        // Rollback already handled in submitFeedback
+      }
     }
   }
 
@@ -215,16 +218,20 @@ class Feedback {
   }
 
   /**
-   * Submit feedback to backend API
+   * Submit feedback to backend API with rollback on failure
    * @param {Object} entry - The conversation entry
    * @param {string} feedbackType - 'positive' or 'negative'
+   * @param {string} entryId - The entry ID for rollback
+   * @param {HTMLElement} entryElement - The entry element for UI rollback
+   * @param {string|null} previousFeedback - Previous feedback state for rollback
+   * @returns {boolean} True if successful, false otherwise
    */
-  async submitFeedback(entry, feedbackType) {
+  async submitFeedback(entry, feedbackType, entryId, entryElement, previousFeedback) {
     if (!this.apiClient) {
       console.warn('API client not configured, feedback not sent to server');
-      return;
+      return true; // Consider it success if no API client (local-only mode)
     }
-    
+
     try {
       const feedbackData = {
         query: entry.query,
@@ -233,16 +240,67 @@ class Feedback {
         session_id: this.getSessionId(),
         timestamp: Date.now()
       };
-      
+
       await this.apiClient.submitFeedback(feedbackData);
-      
+
       console.log('Feedback submitted successfully:', feedbackType);
-      
+      return true;
+
     } catch (error) {
       console.error('Error submitting feedback to server:', error);
-      // Don't show error to user - feedback is recorded locally even if server fails
-      // The UI has already been updated, so the user experience is not interrupted
+
+      // Rollback to previous state
+      this.setFeedbackState(entryId, previousFeedback);
+      this.updateFeedbackUI(entryElement, previousFeedback);
+
+      // Update conversation entry
+      if (this.conversation) {
+        this.conversation.updateEntry(entryId, {
+          feedback: previousFeedback
+        });
+      }
+
+      // Show error notification to user
+      this.showErrorNotification(entryElement, 'Failed to save feedback. Please try again.');
+
+      return false;
     }
+  }
+
+  /**
+   * Show error notification near the feedback buttons
+   * @param {HTMLElement} entryElement - The conversation entry element
+   * @param {string} message - Error message to display
+   */
+  showErrorNotification(entryElement, message) {
+    if (!entryElement) return;
+
+    // Remove existing error if present
+    const existingError = entryElement.querySelector('.feedback-error-message');
+    if (existingError) {
+      existingError.remove();
+    }
+
+    // Create error message
+    const errorMessage = document.createElement('div');
+    errorMessage.className = 'feedback-error-message';
+    errorMessage.textContent = message;
+    errorMessage.setAttribute('role', 'alert');
+    errorMessage.setAttribute('aria-live', 'assertive');
+
+    // Insert after feedback buttons
+    const feedbackButtonsContainer = entryElement.querySelector('.feedback-buttons');
+    if (feedbackButtonsContainer) {
+      feedbackButtonsContainer.parentNode.insertBefore(
+        errorMessage,
+        feedbackButtonsContainer.nextSibling
+      );
+    }
+
+    // Auto-remove after duration
+    setTimeout(() => {
+      errorMessage.remove();
+    }, this.confirmationDuration * 2); // Show errors longer than confirmations
   }
 
   /**

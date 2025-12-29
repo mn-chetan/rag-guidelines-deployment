@@ -7,16 +7,20 @@ class Conversation {
   constructor(options = {}) {
     // DOM elements
     this.displayElement = options.displayElement || document.getElementById('conversation-display');
-    
+
     // State - store conversation history in memory (session-based)
     this.entries = [];
-    
+
+    // Event listener tracking for cleanup (prevents memory leaks)
+    // Maps entry ID to array of { element, eventType, handler }
+    this.entryListeners = new Map();
+
     // Configuration
     this.autoScroll = options.autoScroll !== undefined ? options.autoScroll : true;
-    
+
     // Optional sidebar reference for updating source links
     this.sidebar = options.sidebar || null;
-    
+
     // Initialize
     this.initialize();
   }
@@ -29,9 +33,37 @@ class Conversation {
       console.error('Conversation display element not found');
       return;
     }
-    
+
+    // Set up event delegation for PDF source links
+    // This prevents memory leaks from individual listeners on each link
+    this.setupPDFClickHandler();
+
     // Show welcome message on initialization
     this.showWelcomeMessage();
+  }
+
+  /**
+   * Set up event delegation for PDF source link clicks
+   * Using delegation prevents memory leaks when entries are removed
+   */
+  setupPDFClickHandler() {
+    this.displayElement.addEventListener('click', (event) => {
+      const pdfLink = event.target.closest('.pdf-source');
+      if (pdfLink) {
+        event.preventDefault();
+        const url = pdfLink.dataset.pdfUrl;
+        const title = pdfLink.dataset.pdfTitle || 'Document';
+        const snippet = pdfLink.dataset.pdfSnippet || '';
+
+        // Use global PDF viewer instance if available
+        if (window.pdfViewer) {
+          window.pdfViewer.open(url, snippet, title);
+        } else {
+          // Fallback: open in new tab
+          window.open(url, '_blank');
+        }
+      }
+    });
   }
 
   /**
@@ -363,6 +395,76 @@ class Conversation {
   }
 
   /**
+   * Register an event listener for cleanup tracking
+   * @param {string} entryId - The entry ID this listener belongs to
+   * @param {HTMLElement} element - The element with the listener
+   * @param {string} eventType - The event type (e.g., 'click')
+   * @param {Function} handler - The event handler function
+   */
+  registerListener(entryId, element, eventType, handler) {
+    if (!this.entryListeners.has(entryId)) {
+      this.entryListeners.set(entryId, []);
+    }
+    this.entryListeners.get(entryId).push({ element, eventType, handler });
+  }
+
+  /**
+   * Cleanup all event listeners for a specific entry
+   * @param {string} entryId - The entry ID
+   */
+  cleanupEntryListeners(entryId) {
+    const listeners = this.entryListeners.get(entryId);
+    if (listeners) {
+      listeners.forEach(({ element, eventType, handler }) => {
+        element.removeEventListener(eventType, handler);
+      });
+      this.entryListeners.delete(entryId);
+    }
+  }
+
+  /**
+   * Cleanup all event listeners for all entries
+   */
+  cleanupAllListeners() {
+    this.entryListeners.forEach((listeners, entryId) => {
+      listeners.forEach(({ element, eventType, handler }) => {
+        element.removeEventListener(eventType, handler);
+      });
+    });
+    this.entryListeners.clear();
+  }
+
+  /**
+   * Remove an entry from the conversation
+   * @param {string} entryId - The entry ID to remove
+   * @returns {boolean} True if removed, false if not found
+   */
+  removeEntry(entryId) {
+    // Cleanup event listeners for this entry
+    this.cleanupEntryListeners(entryId);
+
+    // Remove from entries array
+    const index = this.entries.findIndex(e => e.id === entryId);
+    if (index === -1) {
+      return false;
+    }
+    this.entries.splice(index, 1);
+
+    // Remove from DOM
+    const entryElement = this.displayElement.querySelector(`[data-entry-id="${entryId}"]`);
+    if (entryElement) {
+      entryElement.remove();
+    }
+
+    // Show welcome message if no entries left
+    if (this.entries.length === 0) {
+      this.showWelcomeMessage();
+    }
+
+    return true;
+  }
+
+  /**
    * Re-render a specific entry
    * @param {string} id - The entry ID
    */
@@ -371,18 +473,21 @@ class Conversation {
     if (!entryElement) {
       return;
     }
-    
+
     const entry = this.getEntryById(id);
     if (!entry) {
       return;
     }
-    
+
+    // Cleanup old event listeners before re-rendering
+    this.cleanupEntryListeners(id);
+
     // Remove old element
     entryElement.remove();
-    
+
     // Re-render
     this.renderEntry(entry);
-    
+
     // Scroll to latest if auto-scroll is enabled
     if (this.autoScroll) {
       this.scrollToLatest();
@@ -393,17 +498,20 @@ class Conversation {
    * Clear all conversation history
    */
   clear() {
+    // Cleanup all event listeners to prevent memory leaks
+    this.cleanupAllListeners();
+
     // Clear entries array
     this.entries = [];
-    
+
     // Clear display
     this.displayElement.innerHTML = '';
-    
+
     // Clear sidebar source links
     if (this.sidebar && typeof this.sidebar.clear === 'function') {
       this.sidebar.clear();
     }
-    
+
     // Restore welcome message
     this.showWelcomeMessage();
   }

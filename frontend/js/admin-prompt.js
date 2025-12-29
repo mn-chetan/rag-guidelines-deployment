@@ -261,7 +261,12 @@ class AdminPromptManager {
       console.error('Failed to preview prompt:', error);
       this.showStatus(`Preview error: ${error.message}`, 'error');
       if (this.previewOutput) {
-        this.previewOutput.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+        // Use textContent to prevent XSS from error messages
+        const errorP = document.createElement('p');
+        errorP.className = 'error';
+        errorP.textContent = `Error: ${error.message}`;
+        this.previewOutput.innerHTML = '';
+        this.previewOutput.appendChild(errorP);
       }
     } finally {
       this.previewBtn.disabled = false;

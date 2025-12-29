@@ -6,15 +6,20 @@ import time
 import hashlib
 import markdown
 import base64
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from bs4 import BeautifulSoup
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud import storage
@@ -25,7 +30,7 @@ from vertexai.generative_models import GenerativeModel, GenerationConfig, Part
 from scraper import scrape_url
 from admin import (
     load_managed_urls, save_managed_urls, add_url, remove_url,
-    update_url_status, update_schedule, start_job, update_job_progress,
+    update_url_status, update_schedule, start_job, start_job_atomic, update_job_progress,
     complete_job, get_job_status, update_import_status, compute_content_hash,
     initialize_config_if_needed,
     load_prompt_config, update_prompt, reset_prompt_to_default,
@@ -37,6 +42,38 @@ from config import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Rate limiting configuration
+limiter = Limiter(key_func=get_remote_address)
+
+# Request size limits (from config, with computed base64 overhead)
+MAX_QUERY_LENGTH = settings.MAX_QUERY_LENGTH
+MAX_IMAGE_SIZE = settings.max_image_size_bytes
+MAX_IMAGE_SIZE_BASE64 = int(MAX_IMAGE_SIZE * 1.37)  # base64 overhead
+
+
+# Security headers middleware
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+def sanitize_query(query: str) -> str:
+    """Remove potential prompt injection patterns from user query."""
+    if not query:
+        return query
+    # Remove template syntax that could interfere with prompts
+    sanitized = re.sub(r'\{\{.*?\}\}', '', query)
+    # Remove common instruction override patterns
+    sanitized = re.sub(r'(?i)(ignore|forget|disregard)\s+(previous|above|all|prior)\s+(instructions?|context|prompts?)', '', sanitized)
+    sanitized = re.sub(r'(?i)(new\s+instructions?|override|system\s+prompt)', '', sanitized)
+    return sanitized.strip()
+
 
 # Background job tracking
 background_tasks = {}
@@ -71,14 +108,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Auditor Guidelines API", lifespan=lifespan)
 
-# CORS
+# Register rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security headers middleware (added first so it runs last)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS - hardened configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    expose_headers=["Content-Length"],
 )
 
 
@@ -513,28 +557,40 @@ def build_multimodal_prompt(query: str, context_text: str, images: list[dict], m
 
 
 @app.post("/query-stream")
-async def query_stream(request: QueryRequest):
+@limiter.limit("10/minute")
+async def query_stream(request: Request, query_request: QueryRequest):
     """Stream response using native async Gemini generation."""
-    if not request.query.strip() and not request.images:
+    if not query_request.query.strip() and not query_request.images:
         raise HTTPException(status_code=400, detail="Query or images must be provided")
 
-    if request.images:
-        is_valid, error_msg = validate_images(request.images)
+    # Request size validation
+    if len(query_request.query) > MAX_QUERY_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Query too long. Maximum {MAX_QUERY_LENGTH} characters allowed.")
+
+    # Image size validation
+    for img in query_request.images or []:
+        if len(img.get('data', '')) > MAX_IMAGE_SIZE_BASE64:
+            raise HTTPException(status_code=400, detail=f"Image too large. Maximum {MAX_IMAGE_SIZE // (1024*1024)}MB allowed.")
+
+    if query_request.images:
+        is_valid, error_msg = validate_images(query_request.images)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
 
     start_time = time.time()
 
     try:
-        query_text = request.query.strip() if request.query.strip() else "Analyze this image in the context of the guidelines"
+        # Sanitize query to prevent prompt injection
+        raw_query = query_request.query.strip() if query_request.query.strip() else "Analyze this image in the context of the guidelines"
+        query_text = sanitize_query(raw_query)
         
         # Determine retrieval parameters
         current_page_size = PAGE_SIZE
         current_max_snippets = MAX_SNIPPETS_PER_DOC
-        if request.modification == "shorter":
+        if query_request.modification == "shorter":
             current_page_size = 3
             current_max_snippets = 1
-        if request.images and len(query_text) < 10:
+        if query_request.images and len(query_text) < 10:
             current_page_size = 3
 
         sources = await retrieve_snippets(
@@ -554,12 +610,12 @@ async def query_stream(request: QueryRequest):
                 yield f"data: {json.dumps({'done': True, 'sources': []})}\n\n"
             return StreamingResponse(error_stream(), media_type="text/event-stream")
 
-        if request.images:
-            prompt = build_multimodal_prompt(query_text, context_text, request.images, request.modification)
+        if query_request.images:
+            prompt = build_multimodal_prompt(query_text, context_text, query_request.images, query_request.modification)
         else:
-            prompt = build_prompt(query_text, context_text, request.modification)
-        
-        token_limit = settings.TOKEN_LIMITS.get(request.modification, settings.TOKEN_LIMITS["default"])
+            prompt = build_prompt(query_text, context_text, query_request.modification)
+
+        token_limit = settings.TOKEN_LIMITS.get(query_request.modification, settings.TOKEN_LIMITS["default"])
         
         generation_config = GenerationConfig(
             temperature=0.4,
@@ -661,7 +717,7 @@ async def submit_feedback(request: FeedbackRequest):
         
     except Exception as e:
         logger.error(f"Error processing feedback: {e}")
-        return {"status": "success", "message": "Feedback received"}
+        raise HTTPException(status_code=500, detail="Failed to save feedback. Please try again.")
 
 
 @app.post("/index-url", response_model=IndexURLResponse)
@@ -710,7 +766,8 @@ async def index_url(request: IndexURLRequest):
 # ==================== ADMIN PORTAL ENDPOINTS ====================
 
 @app.get("/admin/urls")
-async def get_managed_urls():
+@limiter.limit("30/minute")
+async def get_managed_urls(request: Request):
     """Get all managed URLs with their status."""
     config = await asyncio.to_thread(load_managed_urls)
     return {
@@ -720,14 +777,15 @@ async def get_managed_urls():
 
 
 @app.post("/admin/urls")
-async def add_managed_url(request: AddURLRequest):
+@limiter.limit("5/minute")
+async def add_managed_url(request: Request, url_request: AddURLRequest):
     """Add a new URL to the managed list."""
     try:
-        parsed = urlparse(request.url)
+        parsed = urlparse(url_request.url)
         if not parsed.scheme or not parsed.netloc:
             raise HTTPException(status_code=400, detail="Invalid URL format")
-        
-        new_url = await asyncio.to_thread(add_url, request.name, request.url)
+
+        new_url = await asyncio.to_thread(add_url, url_request.name, url_request.url)
         return {"status": "success", "url": new_url}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -813,27 +871,28 @@ async def recrawl_single_url(url_id: str):
 
 
 @app.post("/admin/recrawl-all")
-async def recrawl_all_urls(background_tasks_param: bool = True):
+@limiter.limit("2/minute")
+async def recrawl_all_urls(request: Request, background_tasks_param: bool = True):
     """Start a bulk re-crawl of all managed URLs."""
     config = await asyncio.to_thread(load_managed_urls)
     urls = [u for u in config.get("urls", []) if u.get("enabled", True)]
-    
+
     if not urls:
         return {"status": "error", "message": "No URLs to re-crawl"}
-    
-    current_job = await asyncio.to_thread(get_job_status)
-    if current_job and current_job.get("status") == "running":
+
+    url_ids = [u["id"] for u in urls]
+
+    # Use atomic job start to prevent race conditions
+    success, job_id, error = await asyncio.to_thread(start_job_atomic, "bulk_recrawl", url_ids)
+
+    if not success:
         return {
             "status": "error",
-            "message": "A re-crawl job is already running",
-            "job_id": current_job.get("job_id")
+            "message": error or "Failed to start job"
         }
-    
-    url_ids = [u["id"] for u in urls]
-    job_id = await asyncio.to_thread(start_job, "bulk_recrawl", url_ids)
-    
+
     asyncio.create_task(run_bulk_recrawl_job(job_id, urls))
-    
+
     return {
         "status": "started",
         "message": f"Started re-crawling {len(urls)} URLs",
@@ -1005,11 +1064,12 @@ async def get_prompt_config():
 
 
 @app.put("/admin/prompt")
-async def update_prompt_config(request: UpdatePromptRequest):
+@limiter.limit("5/minute")
+async def update_prompt_config(request: Request, prompt_request: UpdatePromptRequest):
     """Update the active prompt template."""
     success, error, config = await asyncio.to_thread(
-        update_prompt, 
-        request.template
+        update_prompt,
+        prompt_request.template
     )
     
     if not success:

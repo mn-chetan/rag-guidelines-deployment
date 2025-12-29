@@ -186,13 +186,38 @@ class SessionManager {
   }
 
   /**
-   * Save session history to localStorage
+   * Save session history to localStorage with quota handling
    */
   saveSessionHistory() {
     try {
       localStorage.setItem(this.storageKey, JSON.stringify(this.sessions));
     } catch (error) {
-      console.error('Failed to save session history:', error);
+      // Handle localStorage quota exceeded
+      if (error.name === 'QuotaExceededError' || error.code === 22) {
+        console.warn('localStorage quota exceeded, pruning old sessions...');
+        this.pruneOldSessions();
+        try {
+          localStorage.setItem(this.storageKey, JSON.stringify(this.sessions));
+        } catch (retryError) {
+          console.error('Failed to save session history after pruning:', retryError);
+        }
+      } else {
+        console.error('Failed to save session history:', error);
+      }
+    }
+  }
+
+  /**
+   * Prune old sessions to free up localStorage space
+   */
+  pruneOldSessions() {
+    // Keep only the most recent half of sessions
+    const keepCount = Math.max(5, Math.floor(this.sessions.length / 2));
+    if (this.sessions.length > keepCount) {
+      // Sort by timestamp (newest first) and keep only recent ones
+      this.sessions.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      this.sessions = this.sessions.slice(0, keepCount);
+      console.log(`Pruned sessions, keeping ${keepCount} most recent`);
     }
   }
 

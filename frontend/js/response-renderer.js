@@ -460,16 +460,12 @@ class ResponseRenderer {
     
     if (isPDF) {
       // Make it open in PDF viewer instead of new tab
+      // Click handling is done via event delegation in Conversation to prevent memory leaks
       link.href = '#';
       link.classList.add('pdf-source');
       link.dataset.pdfUrl = url;
       link.dataset.pdfTitle = source.title || `Source ${index}`;
       link.dataset.pdfSnippet = source.snippet || '';
-      
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        this.openPDFViewer(url, source.snippet || '', source.title || `Source ${index}`);
-      });
     } else {
       // Apply text fragment highlighting for web sources
       const shouldHighlight = source.snippet &&

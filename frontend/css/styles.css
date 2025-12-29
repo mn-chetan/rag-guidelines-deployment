@@ -944,6 +944,12 @@ body {
     opacity: 0.12;
 }
 
+/* Ensure child elements don't capture clicks - allows .closest() to work reliably */
+.suggestion-card > *,
+.related-question-card > * {
+    pointer-events: none;
+}
+
 @media (max-width: 480px) {
     .related-questions-grid {
         gap: var(--md-sys-spacing-4);
@@ -1165,6 +1171,18 @@ body {
     background-color: var(--md-sys-color-success-container);
     color: var(--md-sys-color-success);
     border-left: 3px solid var(--md-sys-color-success);
+    border-radius: var(--md-sys-shape-corner-extra-small);
+    margin-top: var(--md-sys-spacing-16);
+    font-size: var(--font-body-small-size);
+    animation: fadeIn 250ms var(--md-sys-motion-easing-standard);
+}
+
+/* Feedback Error Message */
+.feedback-error-message {
+    padding: var(--md-sys-spacing-8) var(--md-sys-spacing-16);
+    background-color: var(--md-sys-color-error-container);
+    color: var(--md-sys-color-error);
+    border-left: 3px solid var(--md-sys-color-error);
     border-radius: var(--md-sys-shape-corner-extra-small);
     margin-top: var(--md-sys-spacing-16);
     font-size: var(--font-body-small-size);

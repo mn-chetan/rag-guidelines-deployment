@@ -129,21 +129,32 @@ async function handleQuerySubmit(query, images = []) {
         session_id: app.session.getCurrentSessionId(),
         images: images  // Include images in API call
       },
-      // On each chunk
+      // On each chunk - guard against deleted entry
       (chunk) => {
+        // Check if entry still exists before updating
+        if (!app.conversation.getEntryById(entryId)) {
+          console.warn('Entry deleted during streaming, ignoring chunk');
+          return;
+        }
         currentAnswer += chunk;
         app.conversation.updateEntry(entryId, {
           answer: currentAnswer
         });
       },
-      // On complete
+      // On complete - guard against deleted entry
       (response) => {
+        // Check if entry still exists before updating
+        if (!app.conversation.getEntryById(entryId)) {
+          console.warn('Entry deleted during streaming, ignoring completion');
+          app.loading.hideLoading(operationId, { queryInput: app.queryInput });
+          return;
+        }
         app.conversation.updateEntry(entryId, {
           answer: response.answer,
           sources: response.sources,
           streaming: false
         });
-        
+
         // Hide loading state
         app.loading.hideLoading(operationId, { queryInput: app.queryInput });
       }
@@ -164,23 +175,31 @@ async function handleQuerySubmit(query, images = []) {
  * Set up global event listeners
  */
 function setupGlobalEventListeners() {
-  // Listen for suggestion card clicks
+  // Listen for suggestion card and related question clicks (consolidated)
   document.addEventListener('click', (event) => {
-    if (event.target.classList.contains('suggestion-card')) {
-      const query = event.target.dataset.query;
-      if (query) {
-        handleQuerySubmit(query);
-      }
+    // Check loading state to prevent duplicate submissions
+    if (app.queryInput?.isLoading) {
+      return;
     }
-  });
 
-  // Listen for related question card clicks
-  document.addEventListener('click', (event) => {
-    if (event.target.classList.contains('related-question-card')) {
-      const query = event.target.dataset.query;
+    // Handle suggestion card clicks (use closest to handle child element clicks)
+    const suggestionCard = event.target.closest('.suggestion-card');
+    if (suggestionCard) {
+      const query = suggestionCard.dataset.query;
       if (query) {
         handleQuerySubmit(query);
       }
+      return;
+    }
+
+    // Handle related question card clicks
+    const relatedCard = event.target.closest('.related-question-card');
+    if (relatedCard) {
+      const query = relatedCard.dataset.query;
+      if (query) {
+        handleQuerySubmit(query);
+      }
+      return;
     }
   });
 

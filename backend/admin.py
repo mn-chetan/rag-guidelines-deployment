@@ -4,14 +4,17 @@ import hashlib
 import logging
 import asyncio
 import uuid
+import fcntl
+import os
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 from google.cloud import storage
 from config import settings
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = "config/managed_urls.json"
 PROMPT_CONFIG_PATH = "config/prompt_config.json"
+JOB_LOCK_FILE = "/tmp/recrawl_job.lock"
 
 # In-memory job state (for tracking ongoing bulk operations)
 current_job_state: Dict[str, Any] = {}
@@ -211,12 +214,76 @@ def update_schedule(enabled: Optional[bool] = None, interval_hours: Optional[int
     return config["schedule"]
 
 
-def start_job(job_type: str, url_ids: List[str]) -> str:
-    """Start a new indexing job and return job ID."""
+def start_job_atomic(job_type: str, url_ids: List[str]) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Atomically check if a job is running and start a new one if not.
+    Uses file locking to prevent race conditions.
+
+    Returns:
+        Tuple of (success, job_id, error_message)
+    """
     global current_job_state
-    
+
+    try:
+        # Create lock file if it doesn't exist
+        lock_fd = os.open(JOB_LOCK_FILE, os.O_CREAT | os.O_RDWR)
+
+        try:
+            # Try to acquire exclusive lock (non-blocking)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            # Check if job is already running (from GCS state)
+            current = get_job_status()
+            if current and current.get("status") == "running":
+                os.close(lock_fd)
+                return False, None, f"A job is already running: {current.get('job_id')}"
+
+            # Start new job
+            job_id = f"job-{uuid.uuid4().hex[:8]}"
+
+            current_job_state = {
+                "job_id": job_id,
+                "type": job_type,
+                "status": "running",
+                "started_at": datetime.utcnow().isoformat() + "Z",
+                "total_urls": len(url_ids),
+                "processed_urls": 0,
+                "successful_urls": 0,
+                "failed_urls": 0,
+                "skipped_urls": 0,
+                "current_url": None,
+                "current_url_name": None,
+                "errors": [],
+                "completed_at": None
+            }
+
+            # Save to GCS config
+            config = load_managed_urls()
+            config["current_job"] = current_job_state.copy()
+            save_managed_urls(config)
+
+            # Release lock
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+            return True, job_id, None
+
+        except BlockingIOError:
+            # Another process has the lock
+            os.close(lock_fd)
+            return False, None, "Another job operation is in progress"
+
+    except Exception as e:
+        logger.error(f"Failed to start job atomically: {e}")
+        return False, None, str(e)
+
+
+def start_job(job_type: str, url_ids: List[str]) -> str:
+    """Start a new indexing job and return job ID. (Legacy - use start_job_atomic for new code)"""
+    global current_job_state
+
     job_id = f"job-{uuid.uuid4().hex[:8]}"
-    
+
     current_job_state = {
         "job_id": job_id,
         "type": job_type,
@@ -232,12 +299,12 @@ def start_job(job_type: str, url_ids: List[str]) -> str:
         "errors": [],
         "completed_at": None
     }
-    
+
     # Also save to GCS config
     config = load_managed_urls()
     config["current_job"] = current_job_state.copy()
     save_managed_urls(config)
-    
+
     return job_id
 
 

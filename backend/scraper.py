@@ -2,11 +2,85 @@
 import logging
 import httpx
 import trafilatura
+import ipaddress
+import socket
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# SSRF Protection: Blocked protocols and patterns
+BLOCKED_PROTOCOLS = {'file', 'javascript', 'data', 'vbscript', 'ftp', 'gopher'}
+
+
+def validate_url_ssrf(url: str) -> Tuple[bool, str]:
+    """
+    Validate URL to prevent SSRF attacks.
+
+    Returns:
+        Tuple of (is_safe, error_message)
+    """
+    try:
+        parsed = urlparse(url)
+
+        # Check for blocked protocols
+        if parsed.scheme.lower() in BLOCKED_PROTOCOLS:
+            return False, f"Protocol '{parsed.scheme}' is not allowed"
+
+        # Only allow http and https
+        if parsed.scheme.lower() not in ('http', 'https'):
+            return False, f"Only HTTP and HTTPS protocols are allowed"
+
+        # Check for empty or missing host
+        if not parsed.netloc or not parsed.hostname:
+            return False, "Invalid URL: missing hostname"
+
+        hostname = parsed.hostname
+
+        # Block localhost variations
+        localhost_patterns = {'localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'}
+        if hostname.lower() in localhost_patterns:
+            return False, "Localhost URLs are not allowed"
+
+        # Try to resolve hostname and check if it's a private/internal IP
+        try:
+            # Check if hostname is already an IP address
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+                    return False, "Internal/private IP addresses are not allowed"
+            except ValueError:
+                # Not a direct IP, try to resolve the hostname
+                try:
+                    resolved_ips = socket.getaddrinfo(hostname, None)
+                    for _, _, _, _, sockaddr in resolved_ips:
+                        ip = ipaddress.ip_address(sockaddr[0])
+                        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local:
+                            return False, f"URL resolves to internal IP address"
+                except socket.gaierror:
+                    # DNS resolution failed - could be valid external domain
+                    # Let the actual request handle this
+                    pass
+        except Exception as e:
+            logger.warning(f"IP validation error for {hostname}: {e}")
+            # Continue if validation fails - let actual request handle it
+
+        # Block common internal hostnames
+        internal_patterns = ['internal', 'intranet', 'corp', 'private', 'local']
+        hostname_lower = hostname.lower()
+        for pattern in internal_patterns:
+            if pattern in hostname_lower and not hostname_lower.endswith('.com'):
+                return False, "Internal hostnames are not allowed"
+
+        # Check for URL with credentials
+        if parsed.username or parsed.password:
+            return False, "URLs with credentials are not allowed"
+
+        return True, ""
+
+    except Exception as e:
+        return False, f"URL validation error: {str(e)}"
 
 class WebScraper:
     """Handles web page scraping with multiple fallback strategies."""
@@ -28,7 +102,17 @@ class WebScraper:
             Dict with keys: url, title, content, domain, success, error
         """
         try:
-            # Validate URL
+            # SSRF Protection: Validate URL before making request
+            is_safe, ssrf_error = validate_url_ssrf(url)
+            if not is_safe:
+                logger.warning(f"SSRF protection blocked URL: {url} - {ssrf_error}")
+                return {
+                    "url": url,
+                    "success": False,
+                    "error": ssrf_error
+                }
+
+            # Basic URL validation
             parsed = urlparse(url)
             if not parsed.scheme or not parsed.netloc:
                 return {
