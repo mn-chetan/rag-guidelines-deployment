@@ -1,6 +1,6 @@
 """Web scraper module for extracting clean content from URLs."""
 import logging
-import requests
+import httpx
 import trafilatura
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
@@ -17,7 +17,7 @@ class WebScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
 
-    def scrape_url(self, url: str) -> Dict[str, str]:
+    async def scrape_url(self, url: str) -> Dict[str, str]:
         """
         Scrape a URL and extract clean content.
 
@@ -39,22 +39,38 @@ class WebScraper:
 
             logger.info(f"Scraping URL: {url}")
 
-            # Fetch the page
-            response = requests.get(
-                url,
-                headers=self.headers,
-                timeout=self.timeout,
-                allow_redirects=True
-            )
-            response.raise_for_status()
+            # Fetch the page asynchronously
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, headers=self.headers) as client:
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    html_text = response.text
+                except httpx.TimeoutException:
+                    return {
+                        "url": url,
+                        "success": False,
+                        "error": "Request timeout - site took too long to respond"
+                    }
+                except httpx.RequestError as e:
+                    return {
+                        "url": url,
+                        "success": False,
+                        "error": f"Failed to fetch URL: {str(e)}"
+                    }
+                except httpx.HTTPStatusError as e:
+                    return {
+                        "url": url,
+                        "success": False,
+                        "error": f"HTTP error {e.response.status_code}: {e.response.reason_phrase}"
+                    }
 
             # Try trafilatura first (best for article extraction)
-            content = self._extract_with_trafilatura(response.text, url)
+            content = self._extract_with_trafilatura(html_text, url)
 
             # Fallback to BeautifulSoup if trafilatura returns minimal content
             if not content or len(content.get("content", "")) < 100:
                 logger.info("Trafilatura extraction minimal, falling back to BeautifulSoup")
-                content = self._extract_with_beautifulsoup(response.text, url)
+                content = self._extract_with_beautifulsoup(html_text, url)
 
             if not content or len(content.get("content", "")) < 50:
                 return {
@@ -71,18 +87,6 @@ class WebScraper:
             logger.info(f"Successfully scraped {url}: {len(content['content'])} chars")
             return content
 
-        except requests.Timeout:
-            return {
-                "url": url,
-                "success": False,
-                "error": "Request timeout - site took too long to respond"
-            }
-        except requests.RequestException as e:
-            return {
-                "url": url,
-                "success": False,
-                "error": f"Failed to fetch URL: {str(e)}"
-            }
         except Exception as e:
             logger.error(f"Unexpected error scraping {url}: {e}", exc_info=True)
             return {
@@ -173,7 +177,7 @@ class WebScraper:
         return "Untitled"
 
 
-def scrape_url(url: str) -> Dict[str, str]:
+async def scrape_url(url: str) -> Dict[str, str]:
     """Convenience function to scrape a URL."""
     scraper = WebScraper()
-    return scraper.scrape_url(url)
+    return await scraper.scrape_url(url)

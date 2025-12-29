@@ -7,11 +7,9 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 from google.cloud import storage
+from config import settings
 
 logger = logging.getLogger(__name__)
-
-# GCS Configuration
-GCS_BUCKET = "rag-guidelines-v2"
 CONFIG_PATH = "config/managed_urls.json"
 PROMPT_CONFIG_PATH = "config/prompt_config.json"
 
@@ -33,7 +31,7 @@ def load_managed_urls() -> Dict[str, Any]:
     """Load managed URLs configuration from GCS."""
     try:
         client = get_storage_client()
-        bucket = client.bucket(GCS_BUCKET)
+        bucket = client.bucket(settings.GCS_BUCKET)
         blob = bucket.blob(CONFIG_PATH)
         
         if not blob.exists():
@@ -53,7 +51,7 @@ def save_managed_urls(config: Dict[str, Any]) -> bool:
     """Save managed URLs configuration to GCS."""
     try:
         client = get_storage_client()
-        bucket = client.bucket(GCS_BUCKET)
+        bucket = client.bucket(settings.GCS_BUCKET)
         blob = bucket.blob(CONFIG_PATH)
         
         content = json.dumps(config, indent=2, default=str)
@@ -119,7 +117,7 @@ def initialize_config_if_needed():
     """Initialize the config file in GCS if it doesn't exist."""
     try:
         client = get_storage_client()
-        bucket = client.bucket(GCS_BUCKET)
+        bucket = client.bucket(settings.GCS_BUCKET)
         blob = bucket.blob(CONFIG_PATH)
         
         if not blob.exists():
@@ -427,7 +425,7 @@ def load_prompt_config() -> Dict[str, Any]:
     """Load prompt configuration from GCS."""
     try:
         client = get_storage_client()
-        bucket = client.bucket(GCS_BUCKET)
+        bucket = client.bucket(settings.GCS_BUCKET)
         blob = bucket.blob(PROMPT_CONFIG_PATH)
         
         if not blob.exists():
@@ -447,7 +445,7 @@ def save_prompt_config(config: Dict[str, Any]) -> bool:
     """Save prompt configuration to GCS."""
     try:
         client = get_storage_client()
-        bucket = client.bucket(GCS_BUCKET)
+        bucket = client.bucket(settings.GCS_BUCKET)
         blob = bucket.blob(PROMPT_CONFIG_PATH)
         
         content = json.dumps(config, indent=2, default=str)

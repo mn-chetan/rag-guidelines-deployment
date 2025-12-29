@@ -101,9 +101,10 @@ async function initializeApp() {
 /**
  * Handle query submission with streaming
  * @param {string} query - The user's query
+ * @param {Array} images - Array of image objects with data, mime_type, filename
  */
-async function handleQuerySubmit(query) {
-  console.log('Submitting query:', query);
+async function handleQuerySubmit(query, images = []) {
+  console.log('Submitting query:', query, 'with', images.length, 'images');
 
   // Show loading state
   const operationId = app.loading.showQueryLoading({ queryInput: app.queryInput });
@@ -115,16 +116,18 @@ async function handleQuerySubmit(query) {
       answer: '',
       sources: [],
       timestamp: Date.now(),
-      streaming: true
+      streaming: true,
+      images: images.map(img => ({ filename: img.filename, mime_type: img.mime_type }))  // Store metadata only
     });
 
     // Stream response
     let currentAnswer = '';
-    
+
     await app.apiClient.queryAPIStream(
       {
         query: query,
-        session_id: app.session.getCurrentSessionId()
+        session_id: app.session.getCurrentSessionId(),
+        images: images  // Include images in API call
       },
       // On each chunk
       (chunk) => {

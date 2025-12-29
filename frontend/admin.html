@@ -36,6 +36,18 @@
 
         <!-- Main Content -->
         <main class="admin-main">
+            <!-- Tab Navigation -->
+            <nav class="admin-tabs-nav" role="tablist" id="admin-tabs">
+                <!-- Tabs will be rendered dynamically by admin-tabs.js -->
+            </nav>
+
+            <!-- Tab Content Container -->
+            <div class="admin-content" id="admin-content">
+                <!-- Content will be loaded dynamically based on active tab -->
+            </div>
+
+            <!-- Legacy content kept for backward compatibility (will be moved to tabs) -->
+            <div id="legacy-content" style="display: none;">
             <!-- Status Cards Row -->
             <section class="status-cards">
                 <!-- Data Store Status -->
@@ -120,34 +132,7 @@
                     <span id="url-count" class="url-count">0 URLs</span>
                 </div>
 
-                <!-- Add URL Form -->
-                <form id="add-url-form" class="add-url-form">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="new-url-name">Name</label>
-                            <input 
-                                type="text" 
-                                id="new-url-name" 
-                                placeholder="e.g., Image Guidelines"
-                                required
-                            >
-                        </div>
-                        <div class="form-group url-group">
-                            <label for="new-url">URL</label>
-                            <input 
-                                type="url" 
-                                id="new-url" 
-                                placeholder="https://example.com/guidelines"
-                                required
-                            >
-                        </div>
-                        <button type="submit" class="action-button add-btn">
-                            <span class="material-symbols-outlined">add</span>
-                            Add URL
-                        </button>
-                    </div>
-                    <div id="add-url-status" class="form-status hidden"></div>
-                </form>
+                <!-- Add URL Form removed - URLs managed via backend only -->
 
                 <!-- URL List -->
                 <div id="url-list" class="url-list">
@@ -282,6 +267,7 @@ RULES:
                     </div>
                 </div>
             </section>
+            </div><!-- End legacy-content -->
         </main>
 
         <!-- Footer -->
@@ -293,7 +279,10 @@ RULES:
     <!-- Scripts -->
     <script src="js/confirmation-dialog.js?v=1.0"></script>
     <script src="js/api-client.js?v=2.1"></script>
-    <script src="js/admin-app.js?v=1.0"></script>
+    <script src="js/admin-tabs.js?v=1.0"></script>
+    <script src="js/admin-dashboard.js?v=1.0"></script>
+    <script src="js/admin-prompt-guided.js?v=1.0"></script>
+    <script src="js/admin-app.js?v=2.0"></script>
     <script src="js/admin-prompt.js?v=1.0"></script>
 </body>
 </html>

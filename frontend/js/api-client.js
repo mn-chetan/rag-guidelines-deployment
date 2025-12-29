@@ -57,7 +57,9 @@ class APIClient {
    */
   async queryAPIStream(queryData, onChunk, onComplete) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    // Increase timeout to 60 seconds if images are present (vs 10s for text-only)
+    const timeout = queryData.images && queryData.images.length > 0 ? 60000 : this.timeout;
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     try {
       const response = await fetch(`${this.baseURL}/query-stream`, {

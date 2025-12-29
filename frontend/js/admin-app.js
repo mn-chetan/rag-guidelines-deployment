@@ -37,16 +37,10 @@ class AdminApp {
         this.jobProgressContainer = document.getElementById('job-progress-container');
         this.jobProgressBar = document.getElementById('job-progress-bar');
         this.jobProgressText = document.getElementById('job-progress-text');
-        
+
         // Actions
         this.recrawlAllBtn = document.getElementById('recrawl-all-btn');
-        
-        // Add URL form
-        this.addUrlForm = document.getElementById('add-url-form');
-        this.newUrlName = document.getElementById('new-url-name');
-        this.newUrl = document.getElementById('new-url');
-        this.addUrlStatus = document.getElementById('add-url-status');
-        
+
         // URL list
         this.urlList = document.getElementById('url-list');
         this.urlCount = document.getElementById('url-count');
@@ -55,16 +49,10 @@ class AdminApp {
     bindEvents() {
         // Recrawl all button
         this.recrawlAllBtn.addEventListener('click', () => this.recrawlAll());
-        
-        // Add URL form
-        this.addUrlForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.addUrl();
-        });
-        
+
         // Schedule toggle
         this.scheduleEnabled.addEventListener('change', () => this.updateSchedule());
-        
+
         // Schedule interval
         this.scheduleInterval.addEventListener('change', () => this.updateSchedule());
     }
@@ -118,14 +106,14 @@ class AdminApp {
             this.urlList.innerHTML = `
                 <div class="empty-state">
                     <span class="material-symbols-outlined">link_off</span>
-                    <p>No URLs added yet. Add your first URL above.</p>
+                    <p>No URLs configured. URLs are managed via backend configuration.</p>
                 </div>
             `;
             return;
         }
 
         this.urlList.innerHTML = this.urls.map(url => this.renderUrlItem(url)).join('');
-        
+
         // Bind events for each URL item
         this.urls.forEach(url => {
             const item = document.querySelector(`[data-url-id="${url.id}"]`);
@@ -137,14 +125,10 @@ class AdminApp {
                     nameEl.classList.toggle('expanded');
                     urlEl.classList.toggle('visible');
                 });
-                
+
                 // Recrawl button
                 const recrawlBtn = item.querySelector('.recrawl-btn');
                 recrawlBtn.addEventListener('click', () => this.recrawlUrl(url.id));
-                
-                // Delete button
-                const deleteBtn = item.querySelector('.delete-btn');
-                deleteBtn.addEventListener('click', () => this.deleteUrl(url.id, url.name));
             }
         });
     }
@@ -183,9 +167,6 @@ class AdminApp {
                     <button class="icon-button recrawl-btn" title="Re-crawl this URL">
                         <span class="material-symbols-outlined">refresh</span>
                     </button>
-                    <button class="icon-button danger delete-btn" title="Remove this URL">
-                        <span class="material-symbols-outlined">delete</span>
-                    </button>
                 </div>
             </div>
         `;
@@ -211,72 +192,6 @@ class AdminApp {
             'indexing': 'Indexing...'
         };
         return textMap[status] || 'Unknown';
-    }
-
-    async addUrl() {
-        const name = this.newUrlName.value.trim();
-        const url = this.newUrl.value.trim();
-        
-        if (!name || !url) {
-            this.showFormStatus('Please fill in both name and URL', 'error');
-            return;
-        }
-        
-        try {
-            const response = await fetch(`${this.apiClient.baseURL}/admin/urls`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, url })
-            });
-            
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.detail || 'Failed to add URL');
-            }
-            
-            this.showFormStatus('URL added successfully!', 'success');
-            this.newUrlName.value = '';
-            this.newUrl.value = '';
-            
-            await this.loadUrls();
-            
-            // Hide status after 3 seconds
-            setTimeout(() => this.hideFormStatus(), 3000);
-        } catch (error) {
-            console.error('Failed to add URL:', error);
-            this.showFormStatus(error.message, 'error');
-        }
-    }
-
-    async deleteUrl(urlId, urlName) {
-        const confirmed = await confirmationDialog.show({
-            title: 'Remove URL?',
-            message: `Remove "${urlName}" from managed URLs? This cannot be undone.`,
-            confirmText: 'Remove',
-            cancelText: 'Cancel',
-            variant: 'danger'
-        });
-        
-        if (!confirmed) {
-            return;
-        }
-        
-        try {
-            const response = await fetch(`${this.apiClient.baseURL}/admin/urls/${urlId}`, {
-                method: 'DELETE'
-            });
-            
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.detail || 'Failed to delete URL');
-            }
-            
-            await this.loadUrls();
-        } catch (error) {
-            console.error('Failed to delete URL:', error);
-            alert(`Failed to delete URL: ${error.message}`);
-        }
     }
 
     async recrawlUrl(urlId) {
@@ -510,16 +425,6 @@ class AdminApp {
 
     // ==================== Utilities ====================
 
-    showFormStatus(message, type) {
-        this.addUrlStatus.textContent = message;
-        this.addUrlStatus.className = `form-status ${type}`;
-        this.addUrlStatus.classList.remove('hidden');
-    }
-
-    hideFormStatus() {
-        this.addUrlStatus.classList.add('hidden');
-    }
-
     formatDate(isoString) {
         const date = new Date(isoString);
         return date.toLocaleString('en-US', {
@@ -562,5 +467,62 @@ class AdminApp {
 
 // Initialize the app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize tab system
+    const tabs = new AdminTabs({
+        tabsContainer: document.getElementById('admin-tabs'),
+        contentContainer: document.getElementById('admin-content'),
+        onTabChange: (tabId) => {
+            console.log(`Switched to tab: ${tabId}`);
+        }
+    });
+
+
+
+    // Initialize admin app (will be refactored into tabs)
     window.adminApp = new AdminApp();
+
+    // Register tabs
+    tabs.registerTabs([
+        {
+            id: 'url-management',
+            label: 'URL Management',
+            icon: 'link',
+            loadContent: async (container) => {
+                // Clone the legacy URL management section
+                const legacyContent = document.getElementById('legacy-content');
+                const urlSection = legacyContent.querySelector('.url-management');
+                const statusCards = legacyContent.querySelector('.status-cards');
+                const bulkActions = legacyContent.querySelector('.bulk-actions');
+
+                container.innerHTML = '';
+                container.appendChild(statusCards.cloneNode(true));
+                container.appendChild(bulkActions.cloneNode(true));
+                container.appendChild(urlSection.cloneNode(true));
+
+                // Re-bind events since we cloned the elements
+                window.adminApp.bindElements();
+                window.adminApp.bindEvents();
+                await window.adminApp.loadAllData();
+            }
+        },
+        {
+            id: 'prompt-builder',
+            label: 'Prompt Builder',
+            icon: 'edit_note',
+            loadContent: async (container) => {
+                // Initialize guided prompt builder
+                const guidedBuilder = new GuidedPromptBuilder({
+                    apiClient: new APIClient(),
+                    onSave: (template, config) => {
+                        console.log('Prompt saved:', { template, config });
+                    }
+                });
+
+                guidedBuilder.render(container);
+            }
+        }
+    ]);
+
+    // Store tabs instance globally for access
+    window.adminTabs = tabs;
 });

@@ -1,27 +1,22 @@
 """Feedback logging module with BigQuery integration."""
-import os
 import logging
 import uuid
+import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any
 from google.cloud import bigquery
 from google.api_core import retry
+from config import settings
 
 logger = logging.getLogger(__name__)
-
-# Configuration
-PROJECT_ID = os.getenv("PROJECT_ID", "rag-for-guidelines")
-BIGQUERY_DATASET = os.getenv("BIGQUERY_DATASET", "rag_analytics")
-BIGQUERY_TABLE = os.getenv("BIGQUERY_TABLE", "feedback")
-
 
 class FeedbackLogger:
     """Handles feedback logging to BigQuery with auto-initialization."""
     
     def __init__(self):
-        self.client = bigquery.Client(project=PROJECT_ID)
-        self.dataset_id = f"{PROJECT_ID}.{BIGQUERY_DATASET}"
-        self.table_id = f"{self.dataset_id}.{BIGQUERY_TABLE}"
+        self.client = bigquery.Client(project=settings.PROJECT_ID)
+        self.dataset_id = f"{settings.PROJECT_ID}.{settings.BIGQUERY_DATASET}"
+        self.table_id = f"{self.dataset_id}.{settings.BIGQUERY_TABLE}"
         self.initialized = False
         
     def initialize_bigquery(self):
@@ -126,8 +121,12 @@ class FeedbackLogger:
                 "prompt_version": prompt_version,
             }
             
-            # Insert row
-            errors = self.client.insert_rows_json(self.table_id, [row])
+            # Insert row (run blocking IO in thread)
+            errors = await asyncio.to_thread(
+                self.client.insert_rows_json,
+                self.table_id,
+                [row]
+            )
             
             if errors:
                 logger.error(f"BigQuery insert errors: {errors}")

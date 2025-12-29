@@ -9,6 +9,7 @@ COPY main.py .
 COPY scraper.py .
 COPY admin.py .
 COPY feedback.py .
+COPY config.py .
 
 EXPOSE 8080
 

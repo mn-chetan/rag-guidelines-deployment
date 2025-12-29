@@ -60,7 +60,8 @@ class Conversation {
       sources: entry.sources || [],
       timestamp: entry.timestamp || Date.now(),
       feedback: entry.feedback || null,
-      streaming: entry.streaming || false
+      streaming: entry.streaming || false,
+      images: entry.images || []  // Store image metadata
     };
     
     // Add to entries array
@@ -185,11 +186,22 @@ class Conversation {
     const queryContent = document.createElement('div');
     queryContent.className = 'query-content';
     queryContent.textContent = entry.query;
-    
+
+    // Add image indicator if images were uploaded
+    if (entry.images && entry.images.length > 0) {
+      const imageIndicator = document.createElement('div');
+      imageIndicator.className = 'query-image-indicator';
+      imageIndicator.innerHTML = `
+        <span class="material-symbols-outlined">image</span>
+        <span>${entry.images.length} image(s) uploaded</span>
+      `;
+      queryContent.appendChild(imageIndicator);
+    }
+
     const queryTimestamp = document.createElement('div');
     queryTimestamp.className = 'query-timestamp';
     queryTimestamp.textContent = this.formatTimestamp(entry.timestamp);
-    
+
     queryElement.appendChild(queryContent);
     queryElement.appendChild(queryTimestamp);
     
@@ -402,21 +414,64 @@ class Conversation {
   showWelcomeMessage() {
     const welcomeHTML = `
       <div class="welcome-message">
-        <h2>Guideline Assistant</h2>
-        <p>Ask questions about guidelines to get answers with source citations.</p>
+        <div class="welcome-header animate-fade-in">
+          <div class="welcome-icon-container">
+            <span class="material-symbols-outlined welcome-icon">psychology</span>
+          </div>
+          <h2 class="welcome-title">Guideline Assistant</h2>
+        </div>
+        <p class="welcome-subtitle animate-fade-in animate-delay-150">
+          Ask questions about guidelines to get answers with source citations. Upload images for visual analysis.
+        </p>
         <div class="suggestion-grid">
-          <button class="suggestion-card" data-query="I see images of burning tarot cards. Is this inappropriate and flaggable?">
-            I see images of burning tarot cards. Is this inappropriate and flaggable?
+          <button class="suggestion-card card-purple animate-fade-in animate-delay-300" data-query="I see images of burning tarot cards. Is this inappropriate and flaggable?">
+            <div class="card-icon">
+              <span class="material-symbols-outlined">auto_awesome</span>
+            </div>
+            <div class="card-content">
+              <span class="card-text">I see images of burning tarot cards. Is this inappropriate and flaggable?</span>
+            </div>
+            <div class="card-arrow">
+              <span class="material-symbols-outlined">arrow_forward</span>
+            </div>
           </button>
-          <button class="suggestion-card" data-query="I see a logo in the center of the image. Should I flag it or not?">
-            I see a logo in the center of the image. Should I flag it or not?
+          <button class="suggestion-card card-blue animate-fade-in animate-delay-450" data-query="I see a logo in the center of the image. Should I flag it or not?">
+            <div class="card-icon">
+              <span class="material-symbols-outlined">branding_watermark</span>
+            </div>
+            <div class="card-content">
+              <span class="card-text">I see a logo in the center of the image. Should I flag it or not?</span>
+            </div>
+            <div class="card-arrow">
+              <span class="material-symbols-outlined">arrow_forward</span>
+            </div>
           </button>
-          <button class="suggestion-card" data-query="The image shows a 3d figure toy holding a toy gun. Should I flag it?">
-            The image shows a 3d figure toy holding a toy gun. Should I flag it?
+          <button class="suggestion-card card-orange animate-fade-in animate-delay-600" data-query="The image shows a 3d figure toy holding a toy gun. Should I flag it?">
+            <div class="card-icon">
+              <span class="material-symbols-outlined">toys</span>
+            </div>
+            <div class="card-content">
+              <span class="card-text">The image shows a 3d figure toy holding a toy gun. Should I flag it?</span>
+            </div>
+            <div class="card-arrow">
+              <span class="material-symbols-outlined">arrow_forward</span>
+            </div>
           </button>
-          <button class="suggestion-card" data-query="I see marijuana leaves in the background of the image but it is not focal point. Should I flag it?">
-            I see marijuana leaves in the background of the image but it is not focal point. Should I flag it?
+          <button class="suggestion-card card-green animate-fade-in animate-delay-750" data-query="I see marijuana leaves in the background of the image but it is not focal point. Should I flag it?">
+            <div class="card-icon">
+              <span class="material-symbols-outlined">nature</span>
+            </div>
+            <div class="card-content">
+              <span class="card-text">I see marijuana leaves in the background of the image but it is not focal point. Should I flag it?</span>
+            </div>
+            <div class="card-arrow">
+              <span class="material-symbols-outlined">arrow_forward</span>
+            </div>
           </button>
+        </div>
+        <div class="welcome-footer animate-fade-in animate-delay-900">
+          <span class="material-symbols-outlined">info</span>
+          <span>Tip: Try uploading images with your questions for more accurate guideline analysis</span>
         </div>
       </div>
     `;

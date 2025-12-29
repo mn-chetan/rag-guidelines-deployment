@@ -73,6 +73,27 @@
             <!-- Query Input Section -->
             <div class="query-input-section">
                 <form id="query-form" class="query-form" role="search">
+                    <!-- Image Upload Button and Preview -->
+                    <div class="image-upload-section">
+                        <input
+                            type="file"
+                            id="image-upload-input"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            multiple
+                            style="display: none;"
+                            aria-label="Upload image files">
+                        <button
+                            type="button"
+                            id="upload-image-btn"
+                            class="upload-image-button"
+                            aria-label="Upload images">
+                            <span class="material-symbols-outlined">add_photo_alternate</span>
+                        </button>
+                        <div id="image-preview-container" class="image-preview-container hidden" role="region" aria-label="Image previews">
+                            <!-- Image previews will be inserted here dynamically -->
+                        </div>
+                    </div>
+
                     <div class="input-wrapper">
                         <label for="query-input" class="visually-hidden">Enter your question about guidelines</label>
                         <textarea
@@ -93,7 +114,7 @@
                         </button>
                     </div>
                     <div id="query-hint" class="query-hint">
-                        Press Enter to submit, Escape to clear
+                        Press Enter to submit, Escape to clear. Drag & drop images or click the camera icon to upload.
                     </div>
                 </form>
 
