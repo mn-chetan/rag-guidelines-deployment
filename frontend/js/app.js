@@ -13,7 +13,8 @@ let app = {
   feedback: null,
   sidebar: null,
   loading: null,
-  pdfViewer: null
+  pdfViewer: null,
+  autocomplete: null
 };
 
 /**
@@ -87,6 +88,12 @@ async function initializeApp() {
       apiClient: app.apiClient,
       conversation: app.conversation
     });
+
+    // Initialize conversation search
+    initializeConversationSearch();
+
+    // Initialize autocomplete (ghost text + suggestion chips)
+    initializeAutocomplete();
 
     // Set up global event listeners
     setupGlobalEventListeners();
@@ -281,16 +288,26 @@ function setupKeyboardShortcuts() {
     const isShift = event.shiftKey;
     
     // Don't trigger shortcuts when typing in input (except specific ones)
-    const isInputFocused = document.activeElement.tagName === 'TEXTAREA' || 
+    const isInputFocused = document.activeElement.tagName === 'TEXTAREA' ||
                            document.activeElement.tagName === 'INPUT';
-    
-    // Ctrl+K or / - Focus search input
-    if ((isCtrl && key === 'k') || (key === '/' && !isInputFocused)) {
+
+    // Ctrl+K - Focus conversation search input
+    if (isCtrl && key === 'k') {
       event.preventDefault();
-      const input = document.getElementById('query-input');
-      if (input) {
-        input.focus();
-        input.select();
+      const searchInput = document.getElementById('conversation-search-input');
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
+      return;
+    }
+
+    // / - Focus conversation search (when not in input)
+    if (key === '/' && !isInputFocused) {
+      event.preventDefault();
+      const searchInput = document.getElementById('conversation-search-input');
+      if (searchInput) {
+        searchInput.focus();
       }
       return;
     }
@@ -314,6 +331,17 @@ function setupKeyboardShortcuts() {
     
     // Escape - Clear input or blur
     if (key === 'Escape') {
+      // Handle conversation search
+      const searchInput = document.getElementById('conversation-search-input');
+      if (searchInput && document.activeElement === searchInput) {
+        if (window.clearAllFiltersAndSearch) {
+          window.clearAllFiltersAndSearch();
+        }
+        searchInput.blur();
+        return;
+      }
+
+      // Handle query input
       const input = document.getElementById('query-input');
       if (input && document.activeElement === input) {
         if (input.value) {
@@ -621,6 +649,222 @@ function escapeHtml(text) {
 }
 
 /**
+ * Initialize conversation search functionality
+ */
+function initializeConversationSearch() {
+  // Initialize search object
+  let conversationSearch = null;
+
+  try {
+    conversationSearch = new ConversationSearch(app.session);
+    console.log('Conversation search initialized');
+  } catch (error) {
+    console.error('Failed to initialize conversation search:', error);
+    return;
+  }
+
+  // Get DOM elements
+  const searchInput = document.getElementById('conversation-search-input');
+  const clearSearchButton = document.getElementById('clear-search-button');
+  const filterChips = document.querySelectorAll('.filter-chip');
+  const clearAllFilters = document.getElementById('clear-all-filters');
+
+  if (!searchInput) {
+    console.warn('Search input not found, skipping search initialization');
+    return;
+  }
+
+  // Debounced search
+  let searchTimeout;
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    const term = e.target.value.trim();
+
+    // Show/hide clear button
+    if (clearSearchButton) {
+      clearSearchButton.style.display = term ? 'flex' : 'none';
+    }
+
+    searchTimeout = setTimeout(() => {
+      performSearch(conversationSearch, term);
+    }, 300); // 300ms debounce
+  });
+
+  // Clear search
+  if (clearSearchButton) {
+    clearSearchButton.addEventListener('click', () => {
+      searchInput.value = '';
+      clearSearchButton.style.display = 'none';
+      clearAllFiltersAndSearch();
+    });
+  }
+
+  // Filter chips
+  filterChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('active');
+      performSearch(conversationSearch, searchInput.value.trim());
+    });
+  });
+
+  // Clear all filters
+  if (clearAllFilters) {
+    clearAllFilters.addEventListener('click', () => {
+      clearAllFiltersAndSearch();
+    });
+  }
+
+  // Refresh search index when new entry is added
+  window.addEventListener('conversation-entry-added', () => {
+    if (conversationSearch) {
+      conversationSearch.refreshIndex();
+    }
+  });
+
+  // Refresh search index when session changes
+  window.addEventListener('session-started', () => {
+    if (conversationSearch) {
+      conversationSearch.refreshIndex();
+    }
+  });
+
+  window.addEventListener('session-loaded', () => {
+    if (conversationSearch) {
+      conversationSearch.refreshIndex();
+    }
+  });
+
+  // Helper function: Perform search
+  function performSearch(searchInstance, term) {
+    if (!searchInstance) return;
+
+    const activeFilters = Array.from(document.querySelectorAll('.filter-chip.active'))
+      .map(chip => chip.dataset.filter);
+
+    const results = searchInstance.search(term, activeFilters);
+    app.session.renderConversationList(results);
+    updateSearchResultsInfo(results, term, activeFilters);
+  }
+
+  // Helper function: Update search results info
+  function updateSearchResultsInfo(results, term = '', filters = []) {
+    const resultsInfo = document.getElementById('search-results-info');
+    const resultsCount = document.getElementById('search-results-count');
+
+    if (!resultsInfo || !resultsCount) return;
+
+    const hasActiveSearch = term || filters.length > 0;
+
+    if (!hasActiveSearch || results.length === 0) {
+      resultsInfo.style.display = hasActiveSearch ? 'flex' : 'none';
+      if (hasActiveSearch && results.length === 0) {
+        resultsCount.textContent = 'No matches found';
+      }
+      return;
+    }
+
+    resultsInfo.style.display = 'flex';
+
+    // Calculate total entry matches
+    const totalEntryMatches = results.reduce((sum, r) => sum + r.entryCount, 0);
+
+    if (term) {
+      resultsCount.textContent = totalEntryMatches > 0
+        ? `${totalEntryMatches} ${totalEntryMatches === 1 ? 'match' : 'matches'} in ${results.length} ${results.length === 1 ? 'conversation' : 'conversations'}`
+        : `${results.length} ${results.length === 1 ? 'conversation' : 'conversations'}`;
+    } else {
+      resultsCount.textContent = `${results.length} ${results.length === 1 ? 'conversation' : 'conversations'}`;
+    }
+  }
+
+  // Helper function: Clear all filters and search (exposed globally for keyboard shortcuts)
+  window.clearAllFiltersAndSearch = function() {
+    // Clear search input
+    const searchInput = document.getElementById('conversation-search-input');
+    if (searchInput) {
+      searchInput.value = '';
+    }
+
+    const clearSearchButton = document.getElementById('clear-search-button');
+    if (clearSearchButton) {
+      clearSearchButton.style.display = 'none';
+    }
+
+    // Clear all filter chips
+    document.querySelectorAll('.filter-chip.active').forEach(chip => {
+      chip.classList.remove('active');
+    });
+
+    // Reset conversation list
+    app.session.renderConversationList();
+    updateSearchResultsInfo(null);
+  };
+}
+
+/**
+ * Initialize autocomplete functionality (ghost text + suggestion chips)
+ */
+function initializeAutocomplete() {
+  try {
+    // Build trie from session history
+    const trie = new AutocompleteTrie();
+    trie.buildFromSessions(app.session.getSessions());
+    console.log(`Autocomplete trie initialized with ${trie.size()} queries`);
+
+    // Initialize ghost text for instant completions
+    const ghostText = new GhostText({
+      inputElement: document.getElementById('query-input'),
+      trie: trie,
+      onAccept: (query, previousValue) => {
+        console.log('Accepted autocomplete suggestion:', query);
+      }
+    });
+
+    // Initialize suggestion chips for Edge LLM suggestions
+    const suggestionChips = new SuggestionChips({
+      inputElement: document.getElementById('query-input'),
+      apiClient: app.apiClient,
+      debounceMs: 500, // Wait 500ms after last keystroke
+      minQueryLength: 5,
+      onSuggestionClick: (query) => {
+        console.log('Selected suggestion:', query);
+        // Clear suggestions after selection
+        suggestionChips.clear();
+      }
+    });
+
+    // Update trie when new entries are added
+    window.addEventListener('conversation-entry-added', (event) => {
+      if (event.detail?.query) {
+        trie.insert(event.detail.query);
+        console.log('Added query to autocomplete trie:', event.detail.query);
+      }
+    });
+
+    // Rebuild trie when session changes
+    window.addEventListener('session-started', () => {
+      trie.rebuild(app.session.getSessions());
+    });
+
+    window.addEventListener('session-loaded', () => {
+      trie.rebuild(app.session.getSessions());
+    });
+
+    // Disable autocomplete during query submission
+    const originalSubmit = handleQuerySubmit;
+    // Note: We don't override handleQuerySubmit here, instead we'll use the loading state
+
+    // Store references for cleanup
+    app.autocomplete = { trie, ghostText, suggestionChips };
+
+    console.log('Autocomplete initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize autocomplete:', error);
+    // Non-critical - app continues without autocomplete
+  }
+}
+
+/**
  * Clean up on page unload
  */
 function cleanupApp() {
@@ -660,6 +904,17 @@ function cleanupApp() {
   if (app.pdfViewer) {
     app.pdfViewer.destroy();
     window.pdfViewer = null;
+  }
+
+  // Clean up autocomplete
+  if (app.autocomplete) {
+    if (app.autocomplete.ghostText) {
+      app.autocomplete.ghostText.destroy();
+    }
+    if (app.autocomplete.suggestionChips) {
+      app.autocomplete.suggestionChips.destroy();
+    }
+    app.autocomplete = null;
   }
 
   console.log('Application cleanup complete');

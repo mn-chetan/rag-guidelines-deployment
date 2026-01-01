@@ -33,6 +33,57 @@
                 </button>
             </div>
 
+            <!-- Search and Filter -->
+            <div class="sidebar-search">
+                <div class="search-input-container">
+                    <span class="material-symbols-outlined search-icon">search</span>
+                    <input
+                        type="text"
+                        id="conversation-search-input"
+                        class="search-input"
+                        placeholder="Search conversations..."
+                        autocomplete="off"
+                        aria-label="Search conversations"
+                    />
+                    <button
+                        id="clear-search-button"
+                        class="clear-search-button"
+                        aria-label="Clear search"
+                        style="display: none;"
+                    >
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+
+                <div class="search-filters" id="search-filters">
+                    <button class="filter-chip" data-filter="today">
+                        <span class="material-symbols-outlined">today</span>
+                        Today
+                    </button>
+                    <button class="filter-chip" data-filter="week">
+                        <span class="material-symbols-outlined">date_range</span>
+                        This Week
+                    </button>
+                    <button class="filter-chip" data-filter="month">
+                        <span class="material-symbols-outlined">calendar_month</span>
+                        This Month
+                    </button>
+                    <button class="filter-chip" data-filter="feedback">
+                        <span class="material-symbols-outlined">thumb_up</span>
+                        Helpful
+                    </button>
+                    <button class="filter-chip" data-filter="images">
+                        <span class="material-symbols-outlined">image</span>
+                        Has Images
+                    </button>
+                </div>
+
+                <div class="search-results-info" id="search-results-info" style="display: none;">
+                    <span id="search-results-count">0 results</span>
+                    <button id="clear-all-filters" class="text-button">Clear all</button>
+                </div>
+            </div>
+
             <!-- Conversation History -->
             <nav class="conversation-history" aria-label="Conversation history">
                 <h2 class="history-title">Recent Conversations</h2>
@@ -133,6 +184,8 @@
     </div>
 
     <!-- Scripts -->
+    <!-- Fuse.js for fuzzy search -->
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
     <script src="js/confirmation-dialog.js?v=1.0"></script>
     <script src="js/api-client.js?v=2.1"></script>
     <script src="js/query-input.js?v=2.0"></script>
@@ -145,6 +198,11 @@
     <script src="js/sidebar.js?v=2.0"></script>
     <script src="js/loading.js?v=2.0"></script>
     <script src="js/pdf-viewer.js?v=2.0"></script>
+    <script src="js/conversation-search.js?v=1.0"></script>
+    <!-- Autocomplete components -->
+    <script src="js/autocomplete-trie.js?v=1.0"></script>
+    <script src="js/ghost-text.js?v=1.0"></script>
+    <script src="js/suggestion-chips.js?v=1.0"></script>
     <script src="js/app.js?v=2.0"></script>
 </body>
 </html>

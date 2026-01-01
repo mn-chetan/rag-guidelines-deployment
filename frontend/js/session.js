@@ -376,21 +376,38 @@ class SessionManager {
 
   /**
    * Render the conversation list in the sidebar
+   * @param {Array|null} searchResults - Optional search results from ConversationSearch
    */
-  renderConversationList() {
+  renderConversationList(searchResults = null) {
     if (!this.conversationListElement) {
       return;
     }
-    
+
     // Clear existing list
     this.conversationListElement.innerHTML = '';
-    
+
+    // Use search results if provided, otherwise show all sessions
+    const sessions = searchResults
+      ? searchResults.map(r => r.session)
+      : this.sessions;
+
+    // Show message if no sessions
+    if (sessions.length === 0) {
+      const emptyMessage = document.createElement('li');
+      emptyMessage.className = 'no-conversations';
+      emptyMessage.textContent = searchResults
+        ? 'No matching conversations'
+        : 'No conversation history yet';
+      this.conversationListElement.appendChild(emptyMessage);
+      return;
+    }
+
     // Group sessions by time period
     const now = Date.now();
     const oneDay = 24 * 60 * 60 * 1000;
     const oneWeek = 7 * oneDay;
     const oneMonth = 30 * oneDay;
-    
+
     const groups = {
       today: [],
       yesterday: [],
@@ -398,11 +415,11 @@ class SessionManager {
       lastMonth: [],
       older: []
     };
-    
+
     // Categorize sessions
-    this.sessions.forEach(session => {
+    sessions.forEach(session => {
       const age = now - session.updatedAt;
-      
+
       if (age < oneDay) {
         groups.today.push(session);
       } else if (age < 2 * oneDay) {
@@ -415,91 +432,121 @@ class SessionManager {
         groups.older.push(session);
       }
     });
-    
-    // Render groups
-    this.renderSessionGroup('Today', groups.today);
-    this.renderSessionGroup('Yesterday', groups.yesterday);
-    this.renderSessionGroup('Last 7 Days', groups.lastWeek);
-    this.renderSessionGroup('Last 30 Days', groups.lastMonth);
-    this.renderSessionGroup('Older', groups.older);
-    
-    // Show message if no sessions
-    if (this.sessions.length === 0) {
-      const emptyMessage = document.createElement('li');
-      emptyMessage.className = 'conversation-list-empty';
-      emptyMessage.textContent = 'No conversation history yet';
-      this.conversationListElement.appendChild(emptyMessage);
-    }
+
+    // Render groups with search results data
+    this.renderSessionGroup('Today', groups.today, searchResults);
+    this.renderSessionGroup('Yesterday', groups.yesterday, searchResults);
+    this.renderSessionGroup('Last 7 Days', groups.lastWeek, searchResults);
+    this.renderSessionGroup('Last 30 Days', groups.lastMonth, searchResults);
+    this.renderSessionGroup('Older', groups.older, searchResults);
   }
 
   /**
    * Render a group of sessions
    * @param {string} groupTitle - Title for the group
    * @param {Array} sessions - Sessions in this group
+   * @param {Array|null} searchResults - Optional search results
    */
-  renderSessionGroup(groupTitle, sessions) {
+  renderSessionGroup(groupTitle, sessions, searchResults = null) {
     if (sessions.length === 0) {
       return;
     }
-    
+
     // Create group header
     const groupHeader = document.createElement('li');
     groupHeader.className = 'conversation-group-header';
     groupHeader.textContent = groupTitle;
     groupHeader.setAttribute('role', 'presentation');
     this.conversationListElement.appendChild(groupHeader);
-    
+
     // Create session items
     sessions.forEach(session => {
-      const item = document.createElement('li');
-      item.className = 'conversation-list-item';
-      item.setAttribute('role', 'listitem');
-      
-      // Mark current session
-      if (session.id === this.currentSessionId) {
-        item.classList.add('active');
-      }
-      
-      // Create button for session
-      const button = document.createElement('button');
-      button.className = 'conversation-list-button';
-      button.setAttribute('aria-label', `Load conversation: ${session.title}`);
-      
-      const title = document.createElement('span');
-      title.className = 'conversation-title';
-      title.textContent = session.title;
-      
-      const timestamp = document.createElement('span');
-      timestamp.className = 'conversation-timestamp';
-      timestamp.textContent = this.formatTimestamp(session.updatedAt);
-      
-      button.appendChild(title);
-      button.appendChild(timestamp);
-      
-      // Click handler to load session
-      button.addEventListener('click', () => {
-        this.loadSession(session.id);
-      });
-      
-      item.appendChild(button);
-      
-      // Add delete button (only for non-current sessions)
-      if (session.id !== this.currentSessionId) {
-        const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'conversation-delete-button';
-        deleteBtn.setAttribute('aria-label', `Delete conversation: ${session.title}`);
-        deleteBtn.innerHTML = '×';
-        
-        deleteBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.deleteSession(session.id);
-        });
-        
-        item.appendChild(deleteBtn);
-      }
-      
+      const searchResult = searchResults?.find(r => r.session.id === session.id);
+      const item = this.createConversationListItem(session, searchResult);
       this.conversationListElement.appendChild(item);
     });
+  }
+
+  /**
+   * Create a conversation list item element
+   * @param {Object} session - Session object
+   * @param {Object|null} searchResult - Search result with matches
+   * @returns {HTMLElement} List item element
+   */
+  createConversationListItem(session, searchResult = null) {
+    const item = document.createElement('li');
+    item.className = 'conversation-list-item';
+    item.setAttribute('role', 'listitem');
+
+    // Highlight search matches
+    if (searchResult && searchResult.matches.length > 0) {
+      item.classList.add('search-match');
+    }
+
+    // Mark current session
+    if (session.id === this.currentSessionId) {
+      item.classList.add('active');
+    }
+
+    // Create button for session
+    const button = document.createElement('button');
+    button.className = 'conversation-list-button';
+    button.setAttribute('aria-label', `Load conversation: ${session.title}`);
+
+    const title = document.createElement('span');
+    title.className = 'conversation-title';
+
+    // Get highlighted title if search result exists
+    if (searchResult) {
+      const titleMatch = searchResult.matches.find(m => m.type === 'session');
+      if (titleMatch && titleMatch.matches) {
+        // Use Fuse.js match indices to highlight
+        title.innerHTML = this.highlightText(session.title, titleMatch.matches);
+      } else {
+        title.textContent = session.title;
+      }
+    } else {
+      title.textContent = session.title;
+    }
+
+    const timestamp = document.createElement('span');
+    timestamp.className = 'conversation-timestamp';
+    timestamp.textContent = this.formatTimestamp(session.updatedAt);
+
+    button.appendChild(title);
+    button.appendChild(timestamp);
+
+    // Add match count badge if search result has entry matches
+    if (searchResult && searchResult.entryCount > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'match-count-badge';
+      badge.textContent = `${searchResult.entryCount} ${searchResult.entryCount === 1 ? 'entry' : 'entries'}`;
+      button.appendChild(badge);
+    }
+
+    // Click handler to load session
+    button.addEventListener('click', () => {
+      this.loadSession(session.id);
+    });
+
+    item.appendChild(button);
+
+    // Add delete button (only for non-current sessions)
+    if (session.id !== this.currentSessionId) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'conversation-delete-button';
+      deleteBtn.setAttribute('aria-label', `Delete conversation: ${session.title}`);
+      deleteBtn.innerHTML = '×';
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.deleteSession(session.id);
+      });
+
+      item.appendChild(deleteBtn);
+    }
+
+    return item;
   }
 
   /**
@@ -556,12 +603,59 @@ class SessionManager {
   }
 
   /**
+   * Highlight text based on Fuse.js match indices
+   * @param {string} text - Original text
+   * @param {Array} fuseMatches - Fuse.js matches with indices
+   * @returns {string} HTML with highlighted matches
+   */
+  highlightText(text, fuseMatches) {
+    if (!fuseMatches || fuseMatches.length === 0) return text;
+
+    // Get match indices from first match key
+    const indices = fuseMatches[0].indices;
+    if (!indices || indices.length === 0) return text;
+
+    // Sort indices by start position
+    const sortedIndices = [...indices].sort((a, b) => a[0] - b[0]);
+
+    // Build highlighted HTML
+    let result = '';
+    let lastIndex = 0;
+
+    sortedIndices.forEach(([start, end]) => {
+      // Escape HTML in text before match
+      result += this.escapeHtml(text.substring(lastIndex, start));
+
+      // Add highlighted match (also escaped)
+      result += `<span class="search-highlight">${this.escapeHtml(text.substring(start, end + 1))}</span>`;
+
+      lastIndex = end + 1;
+    });
+
+    // Add remaining text (escaped)
+    result += this.escapeHtml(text.substring(lastIndex));
+
+    return result;
+  }
+
+  /**
+   * Escape HTML to prevent XSS
+   * @param {string} text - Text to escape
+   * @returns {string} Escaped HTML
+   */
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /**
    * Destroy the component and clean up
    */
   destroy() {
     // Save current session
     this.saveCurrentSession();
-    
+
     // Clear auto-save interval
     if (this.autoSaveInterval) {
       clearInterval(this.autoSaveInterval);

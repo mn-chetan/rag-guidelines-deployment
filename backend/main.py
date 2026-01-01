@@ -37,6 +37,7 @@ from admin import (
     rollback_prompt, validate_prompt_template
 )
 from feedback import get_feedback_logger
+from suggestion import router as suggestion_router
 from config import settings
 
 
@@ -124,6 +125,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
     expose_headers=["Content-Length"],
 )
+
+# Register suggestion router
+app.include_router(suggestion_router)
 
 
 class QueryRequest(BaseModel):
