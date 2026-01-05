@@ -755,11 +755,17 @@ function initializeConversationSearch() {
 
     const hasActiveSearch = term || filters.length > 0;
 
-    if (!hasActiveSearch || results.length === 0) {
-      resultsInfo.style.display = hasActiveSearch ? 'flex' : 'none';
-      if (hasActiveSearch && results.length === 0) {
-        resultsCount.textContent = 'No matches found';
-      }
+    // Handle null/undefined results or no active search
+    if (!results || !hasActiveSearch) {
+      resultsInfo.style.display = 'none';
+      resultsCount.textContent = '';  // Clear the count text
+      return;
+    }
+
+    // Handle empty results with active search
+    if (results.length === 0) {
+      resultsInfo.style.display = 'flex';
+      resultsCount.textContent = 'No matches found';
       return;
     }
 

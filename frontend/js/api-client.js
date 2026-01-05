@@ -49,6 +49,37 @@ class APIClient {
   }
 
   /**
+   * Generic POST request to any endpoint
+   * @param {string} endpoint - API endpoint (e.g., '/suggestions')
+   * @param {Object} data - Data to send in request body
+   * @returns {Promise<Object>} Response data
+   */
+  async post(endpoint, data) {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseURL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.detail || `API error: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      // Re-throw with context
+      if (error.message.includes('timeout') || error.message.includes('Network error')) {
+        throw error;
+      }
+      throw new Error(`POST ${endpoint} failed: ${error.message}`);
+    }
+  }
+
+  /**
    * Submit a query to the backend with streaming
    * @param {Object} queryData - Query data
    * @param {Function} onChunk - Callback for each text chunk

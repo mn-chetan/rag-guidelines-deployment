@@ -45,6 +45,9 @@ class GhostText {
   /**
    * Create the ghost text overlay element
    */
+  /**
+   * Create the ghost text overlay element
+   */
   createGhostElement() {
     // Ensure the input wrapper has relative positioning
     const wrapper = this.inputElement.closest('.input-wrapper');
@@ -67,19 +70,30 @@ class GhostText {
       bottom: 0;
       pointer-events: none;
       color: var(--md-sys-color-on-surface-variant, #666);
-      opacity: 0.4;
+      opacity: 0.5;
       white-space: pre-wrap;
       overflow: hidden;
-      padding: ${computed.padding};
+      padding-top: ${computed.paddingTop};
+      padding-right: ${computed.paddingRight};
+      padding-bottom: ${computed.paddingBottom};
+      padding-left: ${computed.paddingLeft};
+      border-width: ${computed.borderWidth};
+      border-style: solid;
+      border-color: transparent;
       font-family: ${computed.fontFamily};
       font-size: ${computed.fontSize};
       line-height: ${computed.lineHeight};
-      z-index: 0;
+      letter-spacing: ${computed.letterSpacing};
+      font-weight: ${computed.fontWeight};
+      text-transform: ${computed.textTransform};
+      word-spacing: ${computed.wordSpacing};
+      z-index: 10;
       display: none;
+      background: transparent;
     `;
 
-    // Insert ghost element as sibling of input
-    this.inputElement.parentNode.insertBefore(this.ghostElement, this.inputElement);
+    // Insert ghost element AFTER the input to ensure it sits on top (if z-index implies stacking context)
+    this.inputElement.insertAdjacentElement('afterend', this.ghostElement);
 
     // Create keyboard hint element
     this.hintElement = document.createElement('div');
@@ -96,9 +110,10 @@ class GhostText {
       opacity: 0.5;
       pointer-events: none;
       display: none;
+      z-index: 11;
     `;
 
-    // Insert hint after input
+    // Insert hint after input (or after ghost)
     if (wrapper) {
       wrapper.appendChild(this.hintElement);
     }
@@ -128,6 +143,9 @@ class GhostText {
     setTimeout(() => this.hideGhost(), 100);
   }
 
+  /**
+   * Update the ghost text based on current input
+   */
   /**
    * Update the ghost text based on current input
    */
@@ -164,16 +182,36 @@ class GhostText {
 
     this.currentSuggestion = suggestion;
 
-    // Display ghost text: user's text + grayed completion
-    // We need to show the full suggestion but the user's typed portion will be invisible
-    // (covered by the actual input which has z-index above)
-    this.ghostElement.textContent = suggestion;
+    // Create the overlay content
+    // We mask the part the user has already typed with visibility: hidden
+    // so it aligns perfectly over the real input but doesn't "double up" visually.
+    const typedPart = suggestion.substring(0, input.length);
+    const suggestedPart = suggestion.substring(input.length);
+    
+    // We must escape HTML to prevent XSS and ensure improper rendering of special chars
+    this.ghostElement.innerHTML = `<span style="visibility:hidden">${this.escapeHtml(typedPart)}</span>${this.escapeHtml(suggestedPart)}`;
+    
     this.ghostElement.style.display = 'block';
 
     // Show hint
     if (this.hintElement) {
       this.hintElement.style.display = 'block';
     }
+  }
+
+  /**
+   * Escape HTML characters
+   * @param {string} text 
+   * @returns {string}
+   */
+  escapeHtml(text) {
+    if (!text) return '';
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   /**

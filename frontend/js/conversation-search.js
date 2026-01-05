@@ -126,13 +126,16 @@ class ConversationSearch {
    */
   filterOnly(filters) {
     const sessions = this.sessionManager.getSessions();
+    const hasActiveFilters = filters.length > 0;
+    
     return sessions
       .filter(session => this.passesFilters(session, filters))
       .map(session => ({
         session,
         matches: [],
         maxScore: 0,
-        entryCount: session.entries.length
+        // Only show entry count badge when filters are active
+        entryCount: hasActiveFilters ? session.entries.length : 0
       }))
       .sort((a, b) => b.session.updatedAt - a.session.updatedAt);
   }

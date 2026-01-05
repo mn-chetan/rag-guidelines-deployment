@@ -2032,7 +2032,7 @@ body:has(.admin-container) {
     display: flex;
     align-items: center;
     gap: var(--md-sys-spacing-8);
-    padding: var(--md-sys-spacing-14) var(--md-sys-spacing-24);
+    padding: var(--md-sys-spacing-12) var(--md-sys-spacing-24);
     border: none;
     border-radius: var(--md-sys-shape-corner-full);
     font-size: var(--font-label-large-size);
